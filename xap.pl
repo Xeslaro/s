@@ -4,17 +4,21 @@ use http;
 use feature "switch";
 my (%cookie, %child);
 my ($i, $cff) = (0, 0);
-my $base;
+my ($base, $user, $pass);
 while ($i < @ARGV) {
 	if ($ARGV[$i] =~ /^-c$/) {
 		$cff = 1;
 		http::cookie_read(\%cookie, $ARGV[++$i]);
 	} elsif ($ARGV[$i] =~ /^-b$/) {
 		$base = `cat $ARGV[++$i]`;
+	} elsif ($ARGV[$i] eq "-u") {
+		$user = $ARGV[++$i];
+	} elsif ($ARGV[$i] eq "-p") {
+		$pass = $ARGV[++$i];
 	}
 	$i++;
 }
-$base = http::wap_baidu_login("shadow__fiend", "skj4549ooohp", \%cookie) unless ($cff);
+$base = http::wap_baidu_login($user, $pass, \%cookie) unless ($cff);
 while (print("<xap>"), $_=<STDIN>) {
 	chomp;
 	given($_) {
