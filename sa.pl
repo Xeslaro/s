@@ -22,7 +22,7 @@ while (1) {
 	http::update_cookie(\%cookie, @ans);
 	my $cnt;
 	for (@ans) {
-		$cnt = $1 if (/(\d+) new invites/);
+		$cnt = $1 if (/(\d+) new invite/);
 	}
 	unless (defined $cnt) {
 		my $fh;
