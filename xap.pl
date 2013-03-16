@@ -54,6 +54,6 @@ for (keys %child) {
 	wait;
 }
 unless ($cff) {
-	http::cookie_dump(\%cookie, "xap.cookie");
-	`echo -n '$base' > xap.base`;
+	http::cookie_dump(\%cookie, "$user.cookie");
+	`echo -n '$base' > $user.base`;
 }
