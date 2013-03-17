@@ -3,15 +3,12 @@ use strict;
 use http;
 use feature "switch";
 my @p;
-my $i = 0;
+my ($i, $v) = (0, 0);
 my (%cookie, $base, $user, $pass);
 while ($i < @ARGV) {
 	given($ARGV[$i]) {
-		when (/^-b$/) {
-			$base = `cat $ARGV[++$i]`;
-		}
-		when (/^-c$/) {
-			http::cookie_read(\%cookie, $ARGV[++$i]);
+		when (/^-v$/) {
+			$v = 1;
 		}
 		when (/^-u$/) {
 			$user = $ARGV[++$i];
@@ -23,6 +20,18 @@ while ($i < @ARGV) {
 			http::cookie_dump(\%cookie, "$user.cookie");
 		}
 		when (/^-d$/) {
+			if (!%cookie && -f "$user.cookie" && -f "$user.base") {
+				$base = `cat $user.base`;
+				http::cookie_read(\%cookie, "$user.cookie");
+			}
+			unless (http::wap_baidu_cookie_check($base, \%cookie)) {
+				print "cookie check for account $user failed, re-enter your password:";
+				chomp($pass = <>);
+				%cookie = ();
+				$base = http::wap_baidu_login($user, $pass, \%cookie);
+				`echo -n '$base' > $user.base`;
+				http::cookie_dump(\%cookie, "$user.cookie");
+			}
 			my $d = $ARGV[++$i];
 			push @p, [$base, {}, $d];
 			%{$p[$#p][1]} = %cookie;

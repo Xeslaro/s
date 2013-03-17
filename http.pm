@@ -110,6 +110,12 @@ sub wap_baidu_login {
 		}
 	}
 }
+sub wap_baidu_cookie_check {
+	my ($base, $cookie) = @_;
+	my $uri = $base . "m?kw=placebo";
+	my $ans = http_get($uri, "wapp.baidu.com", 80, $cookie);
+	return ($ans =~ /我的i贴吧/) ? 1 : 0;
+}
 sub wap_baidu_submit {
 	my ($uri, $cookie, $co) = @_;
 	my $post;
