@@ -4,7 +4,26 @@ use http;
 use feature "switch";
 my @p;
 my ($i, $v) = (0, 0);
-my (%cookie, $base, $user, $pass);
+my (%cookie, $base, $user, $pass, $d);
+sub pp {
+	if (-f "$user.cookie" && -f "$user.base") {
+		$base = `cat $user.base`;
+		http::cookie_read(\%cookie, "$user.cookie");
+	}
+	if (!%cookie || !http::wap_baidu_cookie_check($base, \%cookie)) {
+		unless ($pass) {
+			print "cookie check for account $user failed, re-enter your password:";
+			chomp($pass = <>);
+		}
+		%cookie = ();
+		$base = http::wap_baidu_login($user, $pass, \%cookie);
+		`echo -n '$base' > $user.base`;
+		http::cookie_dump(\%cookie, "$user.cookie");
+	}
+	push @p, [$base, {}, $d];	
+	%{$p[$#p][1]} = %cookie;
+	%cookie = (), $pass="";
+}
 while ($i < @ARGV) {
 	given($ARGV[$i]) {
 		when (/^-v$/) {
@@ -15,27 +34,19 @@ while ($i < @ARGV) {
 		}
 		when (/^-p$/) {
 			$pass = $ARGV[++$i];
-			$base = http::wap_baidu_login($user, $pass, \%cookie);
-			`echo -n '$base' > $user.base`;
-			http::cookie_dump(\%cookie, "$user.cookie");
 		}
 		when (/^-d$/) {
-			if (!%cookie && -f "$user.cookie" && -f "$user.base") {
-				$base = `cat $user.base`;
-				http::cookie_read(\%cookie, "$user.cookie");
+			$d = $ARGV[++$i];
+			pp();
+		}
+		when (/^-c$/) {
+			my @cfg = `cat $ARGV[++$i]`;
+			for (@cfg) {
+				chomp;
+				/^([^ ]+) ([^ ]+) (.*)$/;
+				$user=$1, $pass=$2, $d=$3;
+				pp();
 			}
-			unless (http::wap_baidu_cookie_check($base, \%cookie)) {
-				print "cookie check for account $user failed, re-enter your password:";
-				chomp($pass = <>);
-				%cookie = ();
-				$base = http::wap_baidu_login($user, $pass, \%cookie);
-				`echo -n '$base' > $user.base`;
-				http::cookie_dump(\%cookie, "$user.cookie");
-			}
-			my $d = $ARGV[++$i];
-			push @p, [$base, {}, $d];
-			%{$p[$#p][1]} = %cookie;
-			%cookie = ();
 		}
 	}
 	$i++;
