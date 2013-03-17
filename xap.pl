@@ -3,28 +3,30 @@ use strict;
 use http;
 use feature "switch";
 my (%cookie, %child);
-my ($i, $cff) = (0, 0);
+my $i=0;
 my ($base, $user, $pass);
 while ($i < @ARGV) {
-	if ($ARGV[$i] =~ /^-c$/) {
-		$cff = 1;
-		http::cookie_read(\%cookie, $ARGV[++$i]);
-	} elsif ($ARGV[$i] =~ /^-b$/) {
-		$base = `cat $ARGV[++$i]`;
-	} elsif ($ARGV[$i] eq "-u") {
+	if ($ARGV[$i] eq "-u") {
 		$user = $ARGV[++$i];
 	} elsif ($ARGV[$i] eq "-p") {
 		$pass = $ARGV[++$i];
 	}
 	$i++;
 }
-if ($cff && !wap_baidu_cookie_check($base, \%cookie)) {
-	print "cookie check failed, re-enter user & password, separate by space:\n";
-	chomp($_ = <>);
-	/([^ ]+) ([^ ]+)/;
-	$user=$1, $pass=$2, $cff=0;
+if (-f "$user.cookie" && -f "$user.base") {
+	$base = `cat $user.base`;
+	http::cookie_read(\%cookie, "$user.cookie");
 }
-$base = http::wap_baidu_login($user, $pass, \%cookie) unless ($cff);
+if (!%cookie || !http::wap_baidu_cookie_check($base, \%cookie)) {
+	unless ($pass) {
+		print "cookie check for account $user failed, re-enter your password:";
+		chomp($pass = <>);
+	}
+	%cookie = ();
+	$base = http::wap_baidu_login($user, $pass, \%cookie);
+	`echo -n '$base' > $user.base`;
+	http::cookie_dump(\%cookie, "$user.cookie");
+}
 while (print("<xap>"), $_=<STDIN>) {
 	chomp;
 	given($_) {
@@ -58,8 +60,4 @@ while (print("<xap>"), $_=<STDIN>) {
 for (keys %child) {
 	kill 15, $_;
 	wait;
-}
-unless ($cff) {
-	http::cookie_dump(\%cookie, "$user.cookie");
-	`echo -n '$base' > $user.base`;
 }
