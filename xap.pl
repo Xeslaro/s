@@ -18,6 +18,12 @@ while ($i < @ARGV) {
 	}
 	$i++;
 }
+if ($cff && !wap_baidu_cookie_check($base, \%cookie)) {
+	print "cookie check failed, re-enter user & password, separate by space:\n";
+	chomp($_ = <>);
+	/([^ ]+) ([^ ]+)/;
+	$user=$1, $pass=$2, $cff=0;
+}
 $base = http::wap_baidu_login($user, $pass, \%cookie) unless ($cff);
 while (print("<xap>"), $_=<STDIN>) {
 	chomp;
