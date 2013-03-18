@@ -13,7 +13,7 @@ sub pp {
 	if (!%cookie || !http::wap_baidu_cookie_check($base, \%cookie)) {
 		unless ($pass) {
 			print "cookie check for account $user failed, re-enter your password:";
-			chomp($pass = <>);
+			chomp($pass = <STDIN>);
 		}
 		%cookie = ();
 		$base = http::wap_baidu_login($user, $pass, \%cookie);
