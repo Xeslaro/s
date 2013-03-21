@@ -18,9 +18,8 @@ sub pp {
 		%cookie = ();
 		$base = http::wap_baidu_login($user, $pass, \%cookie);
 		`echo -n '$base' > $user.base`;
-		http::cookie_dump(\%cookie, "$user.cookie");
 	}
-	push @p, [$base, {}, $d];	
+	push @p, [$base, {}, $d, $user];
 	%{$p[$#p][1]} = %cookie;
 	%cookie = (), $pass="";
 }
@@ -52,7 +51,7 @@ while ($i < @ARGV) {
 	$i++;
 }
 for (@p) {
-	my ($base, $cookie, $d) = @{$_};
+	my ($base, $cookie, $d, $user) = @{$_};
 	for (split / /, $d) {
 		my $uri = $base . "m?kw=" . http::uri_escape($_);
 		my @ans = http::http_get($uri, "wapp.baidu.com", 80, $cookie);
@@ -67,4 +66,5 @@ for (@p) {
 			}
 		}
 	}
+	http::cookie_dump($cookie, "$user.cookie");
 }
