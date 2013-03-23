@@ -1,0 +1,5 @@
+id:0:initdefault:
+rc::sysinit:/etc/init0
+rh:12:wait:/etc/init1
+c1:0:respawn:/sbin/agetty 38400 tty1 linux
+c2:0:respawn:/sbin/agetty 38400 tty2 linux

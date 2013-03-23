@@ -1,0 +1,43 @@
+#!/bin/bash
+PATH=/lib/udev:/sbin:/usr/sbin:/bin:/usr/bin
+modprobe fbcon
+modprobe i915
+echo mounting virtual fs...
+mount -t proc none /proc
+mount -t sysfs sysfs /sys
+mount -t tmpfs run /run
+echo mount root device read-only...
+mount -v -o remount,ro /
+echo checking all partitions and repair if possible...
+fsck -A -a -C
+if ((!$?)); then
+	echo all right...
+elif (($?==1)); then
+	echo partition errors fixed...
+else
+	echo could\'t fix the errors...
+	echo umounting all partitions...
+	umount -v -a -r
+	shutdown -h now
+fi
+echo remounting root device read-write
+mount -v -o remount,rw /
+echo mount other partitions...
+mkdir -p -m 1777 /run/lock
+mkdir -p /dev/{pts,shm}
+mount -v -a
+echo initialize swap partition...
+swapon -a
+echo starting udev...
+udevd --daemon
+udevadm trigger --action=add --type=subsystems
+udevadm trigger --action=add --type=devices
+udevadm settle --timeout=5
+echo loading default keymap...
+loadkeys /lib/kbd/keymaps/i386/qwerty/us.map.gz
+loadkeys /etc/keymaps.rc
+echo setting system clock...
+hwclock -s
+echo starting loopback device...
+ip link set lo up
+setfont /etc/ter-v32b.psf.gz
