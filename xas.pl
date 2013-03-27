@@ -54,6 +54,7 @@ for (@p) {
 	my ($base, $cookie, $d, $user) = @{$_};
 	for (split / /, $d) {
 		my $uri = $base . "m?kw=" . http::uri_escape($_);
+		my $bn = $_;
 		my @ans = http::http_get($uri, "wapp.baidu.com", 80, $cookie);
 		http::update_cookie($cookie, @ans);
 		for (@ans) {
@@ -61,7 +62,20 @@ for (@p) {
 				$uri = $1;
 				while ($uri =~ s/&amp;/&/) {}
 				@ans = http::http_get($uri, "wapp.baidu.com", 80, $cookie);
+				if ($v) {
+					my $f = 0;
+					for (@ans) {
+						if (/签到成功/) {
+							print "$bn 签到成功\n", $f=1;
+							last;
+						}
+					}
+					print "$bn 签到失败\n" if (!$f);
+				}
 				http::update_cookie($cookie, @ans);
+				last;
+			} elsif (/已签到/) {
+				print "$bn 已签到\n" if ($v);
 				last;
 			}
 		}

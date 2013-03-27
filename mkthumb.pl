@@ -25,7 +25,7 @@ for (`ffmpeg -i "$f" 2>&1`) {
 			qx|ffmpeg -ss $ss -i "$f" -f image2 -frames:v 1 $_.jpg|;
 		}
 		my $cnt = int($td/$d);
-		qx|convert {0..$cnt}.jpg -append $o|;
+		qx|convert {0..$cnt}.jpg -append $o && rm {0..$cnt}.jpg|;
 		last;
 	}
 }

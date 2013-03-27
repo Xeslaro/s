@@ -1,13 +1,14 @@
 #!/usr/bin/perl -w
 use strict;
 use http;
-my ($f, $i) = ("", 0);
+my ($f, $i, $d) = ("", 0, 0);
 while ($i < @ARGV) {
 	if ($ARGV[$i] eq "-f") {
 		$f = $ARGV[$i+1];
 		$i += 2;
 		next;
 	}
+	$d=1, $i++, next if ($ARGV[$i] eq "-d");
 	$_ = http::uri_escape($ARGV[$i++]);
 	$_ .= "&format=$f";
 	$_ = "www.flvcd.com/parse.php?kw=" . $_;
@@ -28,4 +29,5 @@ while ($i < @ARGV) {
 	}
 	$cnt--;
 	qx|mencoder -ovc copy -oac lavc -lavcopts acodec=ac3 -of lavf -lavfopts format=matroska -o "$name".mkv {0..$cnt}.flv|;
+	qx|rm {0..$cnt}.flv| if ($d);
 }
