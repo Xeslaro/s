@@ -65,10 +65,7 @@ for (@p) {
 				if ($v) {
 					my $f = 0;
 					for (@ans) {
-						if (/签到成功/) {
-							print "$bn 签到成功\n", $f=1;
-							last;
-						}
+						print("$bn 签到成功\n"), $f=1, last if (/签到成功/);
 					}
 					print "$bn 签到失败\n" if (!$f);
 				}
