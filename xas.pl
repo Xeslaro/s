@@ -18,6 +18,7 @@ sub pp {
 		%cookie = ();
 		$base = http::wap_baidu_login($user, $pass, \%cookie);
 		`echo -n '$base' > $user.base`;
+		http::cookie_dump($cookie, "$user.cookie");
 	}
 	push @p, [$base, {}, $d, $user];
 	%{$p[$#p][1]} = %cookie;
@@ -77,5 +78,4 @@ for (@p) {
 			}
 		}
 	}
-	http::cookie_dump($cookie, "$user.cookie");
 }
