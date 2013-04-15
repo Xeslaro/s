@@ -117,7 +117,7 @@ sub wap_baidu_cookie_check {
 	return ($ans =~ /我的i贴吧/) ? 1 : 0;
 }
 sub wap_baidu_submit {
-	my ($uri, $cookie, $co) = @_;
+	my ($uri, $cookie, $co, $verbose) = @_;
 	my $post;
 	my @ans = http_get($uri, "wapp.baidu.com", 80, $cookie);
 	update_cookie($cookie, @ans);
@@ -133,6 +133,9 @@ sub wap_baidu_submit {
 	$post = "co=" . uri_escape($co) . $post;
 	@ans = http_post("/$uri", "wapp.baidu.com", 80, $post, $cookie);
 	update_cookie($cookie, @ans);
+	if ($verbose) {
+		print for (@ans);
+	}
 }
 sub chrome_cookie_extract {
 	my ($cookie, @c) = @_;

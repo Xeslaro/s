@@ -26,7 +26,10 @@ while ($i < @ARGV) {
 				next if $c && -e "$_.flv";
 				$ans[$i + $_] =~ /href="(.*)" target=/;
 				qx|wget -U Xeslaro --no-dns-cache --connect-timeout=10 -t 0 -O $_.flv "$1"|;
-				qx|wget -U Xeslaro --no-dns-cache --connect-timeout=10 -t 0 -O $_.flv "$1"| while ($?);
+				while ($?) {
+					sleep 300;
+					qx|wget -U Xeslaro --no-dns-cache --connect-timeout=10 -t 0 -O $_.flv "$1"|;
+				}
 			}
 			last;
 		}

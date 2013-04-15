@@ -35,7 +35,7 @@ while (print("<xap>"), $_=<STDIN>) {
 			my $pid = fork();
 			unless ($pid) {
 				while (1) {
-					http::wap_baidu_submit($uri, \%cookie, "up");
+					http::wap_baidu_submit($uri, \%cookie, "up", 1);
 					sleep 600 + int(rand(3000)) + 1;
 				}
 			}
