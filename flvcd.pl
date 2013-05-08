@@ -1,7 +1,7 @@
 #!/usr/bin/perl -w
 use strict;
 use http;
-my ($f, $i, $d, $c) = ("", 0, 0, 0);
+my ($f, $i, $d, $c, $w) = ("", 0, 0, 0, 0);
 while ($i < @ARGV) {
 	if ($ARGV[$i] eq "-f") {
 		$f = $ARGV[$i+1];
@@ -9,6 +9,9 @@ while ($i < @ARGV) {
 		next;
 	} elsif ($ARGV[$i] eq "-c") {
 		$c = 1, $i++;
+		next;
+	} elsif ($ARGV[$i] eq "-w") {
+		$w = 1, $i++;
 		next;
 	}
 	$d=1, $i++, next if ($ARGV[$i] eq "-d");
@@ -25,6 +28,10 @@ while ($i < @ARGV) {
 			for (0..$cnt-1) {
 				next if $c && -e "$_.flv";
 				$ans[$i + $_] =~ /href="(.*)" target=/;
+				if ($w) {
+					qx(mplayer "$1");
+					next;
+				}
 				qx|wget -U Xeslaro --no-dns-cache --connect-timeout=10 -t 0 -O $_.flv "$1"|;
 				while ($?) {
 					sleep 300;
@@ -36,6 +43,8 @@ while ($i < @ARGV) {
 		$i++;
 	}
 	$c=0, $cnt--;
-	qx|mencoder -ovc copy -oac lavc -lavcopts acodec=ac3 -of lavf -lavfopts format=matroska -o "$name".mkv {0..$cnt}.flv|;
-	qx|rm {0..$cnt}.flv| if ($d);
+	unless ($w) {
+		qx|mencoder -ovc copy -oac lavc -lavcopts acodec=ac3 -of lavf -lavfopts format=matroska -o "$name".mkv {0..$cnt}.flv|;
+		qx|rm {0..$cnt}.flv| if ($d);
+	}
 }
