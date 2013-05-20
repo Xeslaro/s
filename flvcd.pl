@@ -1,20 +1,24 @@
-#!/usr/bin/perl -w
+#!/bin/perl
 use strict;
+use warnings;
 use http;
 my ($f, $i, $d, $c, $w) = ("", 0, 0, 0, 0);
-while ($i < @ARGV) {
-	if ($ARGV[$i] eq "-f") {
-		$f = $ARGV[$i+1];
-		$i += 2;
-		next;
-	} elsif ($ARGV[$i] eq "-c") {
-		$c = 1, $i++;
-		next;
-	} elsif ($ARGV[$i] eq "-w") {
-		$w = 1, $i++;
-		next;
+while_opt: while ($i < @ARGV) {
+	for ($ARGV[$i]) {
+		/^-f(.*)$/ && do {
+			$f = $1 ? $1 : $ARGV[++$i];
+			$i++, next while_opt;
+		};
+		/^-c$/ && do {
+			$c = 1, $i++, next while_opt;
+		};
+		/^-w$/ && do {
+			$w = 1, $i++, next while_opt;
+		};
+		/^-d$/ && do {
+			$d = 1, $i++, next while_opt;
+		}
 	}
-	$d=1, $i++, next if ($ARGV[$i] eq "-d");
 	$_ = http::uri_escape($ARGV[$i++]);
 	$_ .= "&format=$f";
 	$_ = "www.flvcd.com/parse.php?kw=" . $_;
@@ -29,7 +33,7 @@ while ($i < @ARGV) {
 				next if $c && -e "$_.flv";
 				$ans[$i + $_] =~ /href="(.*)" target=/;
 				if ($w) {
-					qx(mplayer "$1");
+					qx(mplayer "$1" >&2);
 					next;
 				}
 				qx|wget -U Xeslaro --no-dns-cache --connect-timeout=10 -t 0 -O $_.flv "$1"|;

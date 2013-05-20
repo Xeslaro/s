@@ -3,10 +3,8 @@ while (($#>1)); do
 	case $1 in
 		strip_bin)
 			find ${!#}/{bin,sbin,lib,libexec} | while read i; do
-				if [[ ! -h "$i" && -f "$i" && -x "$i" ]]; then
-					if [[ ! -w "$i" ]]; then
-						chmod u+w "$i"
-					fi
+				if [[ ! -h "$i" && -f "$i" && -x "$i" ]] && file "$i" | grep 'ELF.*not stripped' >/dev/null; then
+					[[ ! -w "$i" ]] && chmod u+w "$i"
 					strip "$i"
 				fi
 			done
@@ -19,28 +17,20 @@ while (($#>1)); do
 					c=$(ls -l "$i")
 					if [[ "$c" =~ "-> "(.*) ]]; then
 						c=${BASH_REMATCH[1]}
-						if [[ ! "$c" =~ gz$ ]]; then
-							ln -sf "$c.gz" "$i"
-						fi
+						[[ ! "$c" =~ gz$ ]] && ln -sf "$c.gz" "$i"
 					fi
-					if [[ ! "$i" =~ gz$ ]]; then
-						mv "$i" "$i.gz"
-					fi
+					[[ ! "$i" =~ gz$ ]] && mv "$i" "$i.gz"
 				fi
 			done
 			;;
 		rm_a)
 			find ${!#}/lib -name '*.a' | while read i; do
-				if [[ -f "${i/%a/so}" ]]; then
-					rm "$i"
-				fi
+				[[ -f "${i/%a/so}" ]] && rm "$i"
 			done
 			;;
 		strip_a)
 			find ${!#}/lib -name '*.a' | while read i; do
-				if [[ ! -w "$i" ]]; then
-					chmod u+w "$i"
-				fi
+				[[ ! -w "$i" ]] && chmod u+w "$i"
 				strip --strip-unneeded "$i"
 			done
 			;;
