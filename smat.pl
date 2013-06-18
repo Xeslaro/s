@@ -43,7 +43,9 @@ while (1) {
 		my ($listing_id, $iprice, $total, $subtotal, $referer);
 		$referer = $_;
 		$iprice = $item_iprice{$_};
-		my @html = qx(wget -U chrome --header="Cookie: $search_acc_cookie" -O - "$_" 2>/dev/null);
+		my $json = qx(wget -U chrome --header="Referer: $referer" --header="Cookie: $search_acc_cookie" -O - "$_/render/?query=&start=0&count=5" 2>/dev/null);
+		$json =~ /results_html":"(.*?)[^\\]"/;
+		my @html = split /\\n/, $json;
 		print $log "going to scanning price for $_\n" if ($debug);
 		$i = 0;
 		while ($i < @html) {
