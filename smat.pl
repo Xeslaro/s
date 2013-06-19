@@ -59,14 +59,14 @@ while (1) {
 			/market_listing_price_without_fee/ && do {
 				$html[$i++] =~ /(\d+\.\d+)/; $subtotal = $1*100;
 				my $fee = $total - $subtotal;
-				print $log "going to buy this item for $total, fee $fee, subtotal $subtotal\n" if ($debug);
+				print "$referer\ngoing to buy this item for $total, fee $fee, subtotal $subtotal\n";
 				my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
-				print $log "post data is $post_data\n" if ($debug);
-				my $post_result = qx(wget -U chrome --header="Referer: $referer" --header="Cookie: $buying_acc_cookie" --post-data="$post_data" -O - "http://steamcommunity.com/market/buylisting/$listing_id 2>/dev/null");
+				print "post data is $post_data\n";
+				my $post_result = qx(wget -U chrome --header="Referer: $referer" --header="Cookie: $buying_acc_cookie" --post-data="$post_data" -O - "http://steamcommunity.com/market/buylisting/$listing_id" 2>/dev/null);
 				$wallet_ballance -= $total unless ($?);
-				print $log $post_result if ($debug);
+				print "$post_result\n";
 			};
 		}
+		sleep 1;
 	}
-	sleep 60;
 }
