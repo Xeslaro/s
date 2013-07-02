@@ -18,7 +18,7 @@ while ($i < @ARGV) {
 	$i++;
 }
 while (1) {
-	my @ans = http::http_get("/profiles/76561198077197678", "steamcommunity.com", 80, \%cookie);
+	my @ans = http::http_get("/id/Xeslaro", "steamcommunity.com", 80, \%cookie);
 	http::update_cookie(\%cookie, @ans);
 	my $cnt;
 	for (@ans) {
