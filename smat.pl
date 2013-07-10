@@ -1,5 +1,7 @@
 #!/bin/perl
-#Steamcommunity Market Auto Trader
+=name
+Steamcommunity Market Auto Trader
+=cut
 use strict;
 use warnings;
 my ($i, $buying_acc, $search_acc, $debug, $iprice_file, $sessionid, $wallet_balance, $log, $rest_time);
@@ -50,18 +52,9 @@ sub referer_to_name {
 	$ans =~ s/%([A-F0-9]{2})/chr hex $1/ge;
 	return $ans;
 }
-sub find_item_name {
-	my ($k, $html) = @_;
-	while ($k < @$html) {
-		$_ = $html->[$k];
-		return $1 if (/market_listing_item_name[^_].*>(.*)</);
-		$k++;
-	}
-	return "";
-}
 sub proc_unusual_courier {
-	my @usual_color = ("61, 104, 196", "130, 50, 207", "74, 183, 141", "255, 255, 255",
-			   "183, 207, 51", "208, 119, 51", "130, 50, 237", "81, 179, 80", "0, 151, 206", "207, 171, 49", "208, 61, 51");
+	my %usual_color = ("61, 104, 196" => "indigo", "130, 50, 207" => "violet", "74, 183, 141" => "teal", "255, 255, 255" => "trivial",
+			   "183, 207, 51" => "light_green", "208, 119, 51" => "orange", "130, 50, 237" => "purple", "81, 179, 80" => "green", "0, 151, 206" => "blue", "207, 171, 49" => "gold", "208, 61, 51" => "red");
 	my %effect_abbreviation_to_full = ("ef" => "Ethereal Flame", "dt" => "Directide Corruption", "sf" => "Sunfire",
 					   "ff" => "Frostivus Frost", "lotus" => "Trail of the Lotus Blossom",
 					   "re" => "Resonant Energy");
@@ -70,13 +63,17 @@ sub proc_unusual_courier {
 	my $max_price;
 	$rest_time = 15;
 	for (split /,/, $option) {
-		/(.*)=(.*)/;
-		($1 eq "func") && next;
-		($1 eq "rest_time") && ($rest_time = $2, next);
-		$iprice{$1} = $2;
+		/(.*?)=(.*)/;
+		next if $1 eq "func";
+		$rest_time = $2, next if $1 eq "rest_time";
+		my $effect = $1;
+		$iprice{$effect} = {};
+		/(.*)=(.*)/ and $iprice{$effect}{$1} = $2 or $iprice{$effect}{general} = $_ for (split /:/, $2);
 	}
 	$max_price = 0;
-	$max_price = ($_ > $max_price) ? $_ : $max_price for (values %iprice);
+	for (values %iprice) {
+		$max_price = ($_ > $max_price) ? $_ : $max_price for (values %$_);
+	}
 	while (1) {
 		my @html = qx(wget -U chrome --header="Cookie: $search_acc_cookie" -O - "$referer" 2>/dev/null);
 		print $log "going to scanning for $referer\n" if ($debug);
@@ -94,6 +91,8 @@ sub proc_unusual_courier {
 			last unless ($count);
 			my $json = qx(wget -U chrome --header="Referer: $referer" --header="Cookie: $search_acc_cookie" -O - "$referer/render/?query=&start=$start&count=$count" 2>/dev/null);
 			$debug && print($log "warning, json response failed, retrying\n"), redo unless $json =~ /^{"success":true/;
+			$json =~ /total_count":(\d+)/;
+			$debug && print($log "no listing for $referer now\n"), next unless defined $1 && $1 > 0;
 			$json =~ /results_html":"(.*?)[^\\]"/;
 			$debug && print($log "json response not valid, retrying\n"), redo unless defined $1;
 			@html = split /\\n/, $1;
@@ -105,42 +104,47 @@ sub proc_unusual_courier {
 			$i = 0;
 			while ($i < @html) {
 				$_ = $html[$i++];
-				/BuyMarketListing\('listing', '(.*?)'/ && do { $description_cnt++, $listing_id = $1; print $log "currenct listing id $listing_id\n" if ($debug); next; };
-				/market_listing_price_with_fee/ && do {
+				if (/BuyMarketListing\('listing', '(.*?)'/) { $description_cnt++, $listing_id = $1; print $log "currenct listing id $listing_id\n" if ($debug); next; }
+				if (/market_listing_price_with_fee/) {
 					next unless $html[$i++] =~ /(\d+\.\d+)/; $total = $1*100;
 					last loop if ($total > $max_price || $total > $wallet_balance);
-				};
-				/market_listing_price_without_fee/ && do {
+				}
+				if (/market_listing_price_without_fee/) {
 					next unless $html[$i++] =~ /(\d+\.\d+)/; $subtotal = $1*100;
 					my $fee = $total - $subtotal;
-					my $type = "";
+					my ($effect, $color);
 					next loop unless defined $descriptions[$description_cnt];
 					while ($descriptions[$description_cnt] =~ /value":"(.*?)"/g) {
 						print $log "current description value is $1\n" if ($debug > 1);
 						$_ = $1;
-						/Effect: (.*)/ && do {
+						if (/Effect: (.*)/) {
 							print $log "effect is $1\n" if ($debug > 1);
 							for (keys %effect_abbreviation_to_full) {
-								$type = $_ if ($1 eq $effect_abbreviation_to_full{$_});
+								$effect = $_ if ($1 eq $effect_abbreviation_to_full{$_});
 							}
-						};
-						/Color: .*?(\d+, \d+, \d+)/ && do {
-							print $log "color is $1\n" if ($debug > 1);
-							next unless (defined $iprice{"legacy"});
-							my $legacy_flag = 1;
-							($1 eq $_) && ($legacy_flag = 0, last) for (@usual_color);
-							$type = "legacy" if ($legacy_flag);
-						};
+						}
+						if (/Color: .*?(\d+, \d+, \d+)/) {
+							$color = defined $usual_color{$1} ? $usual_color{$1} : "legacy";
+							print $log "color is $color\n" if ($debug > 1);
+						}
 					}
-					print $log "this item is of type $type & price $total\n" if ($debug && $type);
-					if ($type && defined $iprice{$type}) {
-						next if ($total > $iprice{$type});
+					print $log "this item is of effect $effect & color $color & price $total\n" if ($debug && $effect);
+					my $legacy = $color eq "legacy" && defined $iprice{legacy}{general};
+					my $specific_effect = defined $effect && defined $iprice{$effect}{general};
+					my $specific_effect_color = defined $effect && defined $iprice{$effect}{$color};
+					if ($legacy || $specific_effect || $specific_effect_color) {
+						my $highest_considered_price = 0;
+						$highest_considered_price = $iprice{legacy}{general} if ($legacy && $iprice{legacy}{general} > $highest_considered_price);
+						$highest_considered_price = $iprice{$effect}{general} if ($specific_effect && $iprice{$effect}{general} > $highest_considered_price);
+						$highest_considered_price = $iprice{$effect}{$color} if ($specific_effect_color && $iprice{$effect}{$color} > $highest_considered_price);
+						print $log "highest_considered_price is $highest_considered_price\n" if ($debug);
+						next if ($total > $highest_considered_price);
 						my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
 						my $post_result = qx(wget -U chrome --header="Referer: $referer" --header="Cookie: $buying_acc_cookie" --post-data="$post_data" -O - "http://steamcommunity.com/market/buylisting/$listing_id" 2>/dev/null);
+						print "effect: $effect color: $color referer: $referer\n";
+						print "condition met, going to buy this item for $total\n";
+						print "post_data is $post_data\n";
 						unless ($?) {
-							print "type: $type referer: $referer\n";
-							print "condition met, going to buy this item for $total\n";
-							print "post_data is $post_data\n";
 							($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 							qx(echo $wallet_balance >w);
 							print "$post_result\nwallet_balance:$wallet_balance\n";
@@ -150,6 +154,7 @@ sub proc_unusual_courier {
 			}
 		}
 		chomp($wallet_balance = qx(cat w));
+	} continue {
 		sleep $rest_time;
 	}
 }
@@ -166,6 +171,8 @@ for (keys %item_iprice) {
 		my ($listing_id, $total, $subtotal);
 		my $json = qx(wget -U chrome --header="Referer: $referer" --header="Cookie: $search_acc_cookie" -O - "$referer/render/?query=&start=0&count=5" 2>/dev/null);
 		$debug && print($log "warning, json response failed, retrying\n"), redo unless $json =~ /^{"success":true/;
+		$json =~ /total_count":(\d+)/;
+		$debug && print($log "no listing for $referer now\n"), next unless defined $1 && $1 > 0;
 		$json =~ /results_html":"(.*?)[^\\]"/;
 		$debug && print($log "json response not valid, retrying\n"), redo unless defined $1;
 		my @html = split /\\n/, $1;
@@ -175,20 +182,20 @@ for (keys %item_iprice) {
 		$i = 0;
 		while ($i < @html) {
 			$_ = $html[$i++];
-			/BuyMarketListing\('listing', '(.*?)'/ && do { $listing_id = $1; print $log "current listing id $listing_id\n" if ($debug); next; };
-			/market_listing_price_with_fee/ && do {
+			if (/BuyMarketListing\('listing', '(.*?)'/) { $listing_id = $1; print $log "current listing id $listing_id\n" if ($debug); next; }
+			if (/market_listing_price_with_fee/) {
 				next unless $html[$i++] =~ /(\d+\.\d+)/; $total = $1*100;
 				print $log "current item price $total\n" if ($debug);
 				last if ($total > $iprice || $total > $wallet_balance);
-			};
-			/market_listing_price_without_fee/ && do {
+			}
+			if (/market_listing_price_without_fee/) {
 				next unless $html[$i++] =~ /(\d+\.\d+)/; $subtotal = $1*100;
 				my $fee = $total - $subtotal;
 				my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
 				my $post_result = qx(wget -U chrome --header="Referer: $referer" --header="Cookie: $buying_acc_cookie" --post-data="$post_data" -O - "http://steamcommunity.com/market/buylisting/$listing_id" 2>/dev/null);
+				print "$referer\ngoing to buy this item for $total, fee $fee, subtotal $subtotal\n";
+				print "post data is $post_data\n";
 				unless ($?) {
-					print "$referer\ngoing to buy this item for $total, fee $fee, subtotal $subtotal\n";
-					print "post data is $post_data\n";
 					($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 					qx(echo $wallet_balance >w);
 					print "$post_result\nwallet_balance:$wallet_balance\n";
@@ -196,6 +203,7 @@ for (keys %item_iprice) {
 			}
 		}
 		chomp($wallet_balance = qx(cat w));
+	} continue {
 		sleep $rest_time;
 	}
 }
