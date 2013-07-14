@@ -4,7 +4,14 @@ Steamcommunity Market Auto Trader
 =cut
 use strict;
 use warnings;
+use Socket;
+sub signal_int_handle {
+	exit 0;
+}
+$SIG{INT} = \&signal_int_handle;
+my ($remote_ip_addr, $remote_host) = ("63.228.223.103", "steamcommunity.com");
 my ($i, $buying_acc, $search_acc, $debug, $iprice_file, $sessionid, $wallet_balance, $log, $rest_time);
+my $socket_http_get;
 $debug = 0;
 $i = 0;
 while ($i < @ARGV) {
@@ -24,7 +31,8 @@ while ($i < @ARGV) {
 }
 open($log, ">", "smat.log") or die "open log file failed." if ($debug);
 my ($buying_acc_cookie, $search_acc_cookie);
-my @cookie_from_file = qx(cat $buying_acc.cookie);
+open(my $fh, "<", "$buying_acc.cookie") or die $!;
+my @cookie_from_file = <$fh>; close($fh) or die $!;
 for (@cookie_from_file) {
 	chomp;
 	/(.*)=(.*)/;
@@ -32,18 +40,21 @@ for (@cookie_from_file) {
 }
 $buying_acc_cookie = join ";", @cookie_from_file;
 print $log "buying_acc_cookie=$buying_acc_cookie\n" if ($debug);
-@cookie_from_file = qx(cat $search_acc.cookie);
+open($fh, "<", "$search_acc.cookie") or die $!;
+@cookie_from_file = <$fh>; close($fh) or die $!;
 chomp for (@cookie_from_file);
 $search_acc_cookie = join ";", @cookie_from_file;
 print $log "search_acc_cookie=$search_acc_cookie\n" if ($debug);
 my %item_iprice;
-for (qx(cat $iprice_file)) {
+open($fh, "<", "$iprice_file") or die $!;
+for (<$fh>) {
 	chomp;
 	/(.*?)=(.*)/;
 	next if ($1 =~ /^#/);
 	print $log "setting price for $1 to $2\n" if ($debug);
 	$item_iprice{$1} = $2;
 }
+close($fh) or die $!;
 sub referer_to_name {
 	(my $referer) = @_;
 	(my $ans) = ($referer =~ m|.*/(.*)|);
@@ -71,11 +82,15 @@ sub proc_unusual_courier {
 	for (values %iprice) {
 		$max_price = ($_ > $max_price) ? $_ : $max_price for (values %$_);
 	}
+	$referer =~ m|http://.*?(/.*)|;
+	my $uri_prefix = $1;
+	print $log "uri prefix is $uri_prefix.\n" if $debug;
 	{
-		my @html = qx(wget -T 10 -U chrome --header="Cookie: $search_acc_cookie" -O - "$referer" 2>/dev/null);
 		print $log "going to scanning for $referer\n" if ($debug);
+		my ($status, $html) = http_get(\$socket_http_get, $uri_prefix, "Cookie: $search_acc_cookie\r\n");
+		print $log "status is $status.\n" if $debug;
 		my $cnt;
-		/searchResults_total">(.*?)</ && do {$cnt = $1; last} for (@html);
+		$cnt = $1 if $html =~ /searchResults_total">(.*?)</;
 		next unless (defined $cnt);
 		$cnt =~ s/,//g;
 		print $log "total item count is $cnt\n" if $debug;
@@ -86,22 +101,26 @@ sub proc_unusual_courier {
 			no integer;
 			last unless ($count);
 			print $log "going to search for start=$start count=$count\n" if ($debug);
-			my $json = qx(wget -T 10 -U chrome --header="Referer: $referer" --header="Cookie: $search_acc_cookie" -O - "$referer/render/?query=&start=$start&count=$count" 2>/dev/null);
-			$debug && print($log "warning, json response failed, retrying\n"), redo unless $json =~ /^{"success":true/;
+			my ($status, $json) = http_get(\$socket_http_get, $uri_prefix . "/render/?query=&start=$start&count=$count", "Referer: $referer\r\n" . "Cookie: $search_acc_cookie\r\n");
+			print $log "status is $status.\n" if $debug;
+			($debug and print $log "warning, json response failed, retrying\n"), redo unless $json =~ /^{"success":true/;
 			$json =~ /total_count":(\d+)/;
-			$debug && print($log "no listing for $referer now\n"), next unless defined $1 && $1 > 0;
+			($debug and print $log "no listing for $referer now\n"), next unless defined $1 && $1 > 0;
 			$json =~ /results_html":"(.*?)[^\\]"/;
-			$debug && print($log "json response not valid, retrying\n"), redo unless defined $1;
-			@html = split /\\n/, $1;
+			($debug and print $log "json response not valid, retrying\n"), redo unless defined $1;
+			my @html = split /\\n/, $1;
 			(my $item_name) = ($json =~ /market_name":"(.*?)"/);
-			$debug && print($log "referer name: $name\nitem: $item_name\ndon't match\n"), redo unless (defined $item_name && $name eq $item_name);
+			unless (defined $item_name and $name eq $item_name) {
+				print($log "referer name: $name\nitem: $item_name\ndon't match\n") if (defined $item_name and $debug);
+				redo;
+			}
 			my @descriptions = $json =~ /descriptions":\[(.*?)\]/g;
 			my ($total, $subtotal, $description_cnt, $listing_id);
 			$description_cnt = -1;
 			$i = 0;
 			while ($i < @html) {
 				$_ = $html[$i++];
-				if (/BuyMarketListing\('listing', '(.*?)'/) { $description_cnt++, $listing_id = $1; print $log "currenct listing id $listing_id\n" if ($debug); next; }
+				if (/BuyMarketListing\('listing', '(.*?)'/) { $description_cnt++, $listing_id = $1; print $log "current listing id $listing_id\n" if ($debug); next; }
 				if (/market_listing_price_with_fee/) {
 					next unless $html[$i++] =~ /(\d+\.\d+)/; $total = $1*100;
 					last loop if ($total > $max_price || $total > $wallet_balance);
@@ -137,13 +156,15 @@ sub proc_unusual_courier {
 						print $log "highest_considered_price is $highest_considered_price\n" if ($debug);
 						next if ($total > $highest_considered_price);
 						my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
-						my $post_result = qx(wget -U chrome --header="Referer: $referer" --header="Cookie: $buying_acc_cookie" --post-data="$post_data" -O - "http://steamcommunity.com/market/buylisting/$listing_id" 2>/dev/null);
+						my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $referer\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
 						print "effect: $effect color: $color referer: $referer\n";
 						print "condition met, going to buy this item for $total\n";
 						print "post_data is $post_data\n";
-						unless ($?) {
+						unless ($status eq "ok") {
 							($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 							print "$post_result\nwallet_balance:$wallet_balance\n";
+						} elsif ($debug) {
+							print "status is $status.\n";
 						}
 					}
 				}
@@ -153,17 +174,24 @@ sub proc_unusual_courier {
 }
 sub proc_usual_item {
 	my ($referer, $iprice, $name) = @_;
+	$referer =~ m|http://.*?(/.*)|;
+	my $uri_prefix = $1;
+	print $log "uri prefix is $uri_prefix.\n" if $debug;
 	my ($listing_id, $total, $subtotal);
 	{
-		my $json = qx(wget -T 10 -U chrome --header="Referer: $referer" --header="Cookie: $search_acc_cookie" -O - "$referer/render/?query=&start=0&count=5" 2>/dev/null);
-		$debug && print($log "warning, json response failed, retrying\n"), redo unless $json =~ /^{"success":true/;
+		my ($status, $json) = http_get(\$socket_http_get, $uri_prefix . "/render/?query=&start=0&count=5", "Referer: $referer\r\n" . "Cookie: $search_acc_cookie\r\n");
+		print $log "status is $status.\n" if $debug;
+		($debug and print $log "warning, json response failed, retrying\n"), redo unless $json =~ /^{"success":true/;
 		$json =~ /total_count":(\d+)/;
-		$debug && print($log "no listing for $referer now\n"), next unless defined $1 && $1 > 0;
+		($debug and print $log "no listing for $referer now\n"), next unless defined $1 && $1 > 0;
 		$json =~ /results_html":"(.*?)[^\\]"/;
-		$debug && print($log "json response not valid, retrying\n"), redo unless defined $1;
+		($debug and print $log "json response not valid, retrying\n"), redo unless defined $1;
 		my @html = split /\\n/, $1;
 		(my $item_name) = ($json =~ /market_name":"(.*?)"/);
-		$debug && print($log "referer name: $name\nitem: $item_name\ndon't match\n"), redo unless (defined $item_name && $name eq $item_name);
+		unless (defined $item_name and $name eq $item_name) {
+			print($log "referer name: $name\nitem: $item_name\ndon't match\n") if (defined $item_name and $debug);
+			redo;
+		}
 		print $log "going to scanning price for $referer\n" if ($debug);
 		$i = 0;
 		while ($i < @html) {
@@ -178,17 +206,88 @@ sub proc_usual_item {
 				next unless $html[$i++] =~ /(\d+\.\d+)/; $subtotal = $1*100;
 				my $fee = $total - $subtotal;
 				my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
-				my $post_result = qx(wget -U chrome --header="Referer: $referer" --header="Cookie: $buying_acc_cookie" --post-data="$post_data" -O - "http://steamcommunity.com/market/buylisting/$listing_id" 2>/dev/null);
+				my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $referer\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
 				print "$referer\ngoing to buy this item for $total, fee $fee, subtotal $subtotal\n";
 				print "post data is $post_data\n";
-				unless ($?) {
+				unless ($status eq "ok") {
 					($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 					print "$post_result\nwallet_balance:$wallet_balance\n";
+				} elsif ($debug) {
+					print "status is $status.\n";
 				}
 			}
 		}
 	}
 }
+sub new_socket_and_connect_to {
+	my ($ip_addr_ascii, $port) = @_;
+	my $ip_addr_numeric = inet_aton($ip_addr_ascii) || die "invalid ip address\n";
+	my $ip_and_port = pack_sockaddr_in($port, $ip_addr_numeric);
+	my $proto = getprotobyname("tcp");
+	socket(my $socket, PF_INET, SOCK_STREAM, $proto) or die "open socket failed: $!\n";
+	while (1) { connect($socket, $ip_and_port) and last or print "connect failed: $!, retrying\n" }
+	print $log "new socket connected.\n" if $debug;
+	return $socket;
+}
+sub http_get {
+	my ($socket_ref, $uri, $additional_header) = @_;
+	my $request = "GET $uri HTTP/1.1\r\n" . "Host: $remote_host\r\n" .
+	    "Connection: keep-alive\r\n" . "User-Agent: Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.31 (KHTML, like Gecko) Chrome/26.0.1410.63 Safari/537.31\r\n" .
+	    $additional_header . "\r\n";
+	while (1) {
+		send($$socket_ref, $request, 0) or die "send failed: $!\n";
+		my ($status, $ans) = http_extract_response($$socket_ref);
+		$status =~ /sock.*error/ and close($$socket_ref), $$socket_ref = new_socket_and_connect_to($remote_ip_addr, 80) or return ($status, $ans);
+	}
+}
+sub http_post {
+	my ($uri, $additional_header, $post_data) = @_;
+	my $socket = new_socket_and_connect_to($remote_ip_addr, 80);
+	my $content_length = length $post_data;
+	my $request = "POST $uri HTTP/1.1\r\n" . "Host: $remote_host\r\n" .
+	    "Connection: keep-alive\r\n" . "User-Agent: Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.31 (KHTML, like Gecko) Chrome/26.0.1410.63 Safari/537.31\r\n" .
+	    "$additional_header" . "Content-Type: application/x-www-form-urlencoded\r\n" .
+	    "Content-Length: $content_length\r\n" . "\r\n" . $post_data;
+	while (1) {
+		send($socket, $request, 0) or die "send failed: $!\n";
+		my ($status, $ans) = http_extract_response($socket);
+		close($socket);
+		$status =~ /sock.*error/ and $socket = new_socket_and_connect_to($remote_ip_addr, 80) or return ($status, $ans);
+	}
+}
+sub http_extract_response {
+	my ($socket) = @_;
+	my ($content_length);
+	my ($chunked_encoding, $met_first_blank_line, $first_line, $ans) = (0, 0, 1, "");
+	while (1) {
+		my $line = <$socket>;
+		not defined $line and return "sock_read_error";
+		$line =~ s/\r?\n$//;
+		$first_line and $first_line = 0, $line !~ m|^HTTP/1.1 200 OK$| and return "http_response_error";
+		$content_length = $1, next if $line =~ /^Content-Length: (\d+)$/ and not $met_first_blank_line;
+		$chunked_encoding = 1, next if $line =~ /^Transfer-Encoding: chunked$/ and not $met_first_blank_line;
+		print $log "server connection header $line\n" if $debug and $line =~ /^Connection:/ and not $met_first_blank_line;
+		print $log "server keep-alive header $line\n" if $debug and $line =~ /^Keep-Alive:/ and not $met_first_blank_line;
+		if (not $met_first_blank_line and not $line) {
+			read($socket, $ans, $content_length) == $content_length and return ("ok", $ans) or return "sock_read_error" if defined $content_length;
+			$met_first_blank_line = 1;
+			next;
+		}
+		if ($met_first_blank_line) {
+			my $this_chunk;
+			my $chunk_size = hex $line;
+			read($socket, $this_chunk, $chunk_size) == $chunk_size and $ans .= $this_chunk or return "sock_read_error" if $chunk_size;
+			$line = <$socket>;
+			not defined $line and return "sock_read_error";
+			$line =~ s/\r?\n$//;
+			return "invalid_http_response" if $line;
+			last unless $chunk_size;
+		}
+	}
+	return ("ok", $ans);
+}
+my $old_sec = time();
+$socket_http_get = new_socket_and_connect_to($remote_ip_addr, 80);
 while (1) {
 	for (keys %item_iprice) {
 		my ($referer, $iprice, $name) = ($_, $item_iprice{$_}, referer_to_name($_));
@@ -199,4 +298,7 @@ while (1) {
 			proc_usual_item($referer, $iprice, $name);
 		}
 	}
+	my $new_sec = time();
+	print $log "seconds for this round is ", $new_sec - $old_sec, ".\n" if ($debug);
+	$old_sec = $new_sec;
 }
