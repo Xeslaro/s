@@ -5,56 +5,87 @@ Steamcommunity Market Auto Trader
 use strict;
 use warnings;
 use Socket;
-sub signal_int_handle {
-	exit 0;
-}
-$SIG{INT} = \&signal_int_handle;
 my ($remote_ip_addr, $remote_host) = ("63.228.223.103", "steamcommunity.com");
 my ($i, $buying_acc, $search_acc, $debug, $iprice_file, $sessionid, $wallet_balance, $log, $rest_time);
-my $socket_http_get;
-$debug = 0;
+my ($socket_http_get, $fork_process, $fh, $buying_acc_cookie, $search_acc_cookie);
+my @cookie_from_file;
+$debug = 0, $fork_process = 1;
 $i = 0;
 while ($i < @ARGV) {
 	$_ = $ARGV[$i++];
-	/^-d$/ && do { $debug = $ARGV[$i++]; next };
-	/^-d(.*)$/ && do { $debug = $1; next };
-	/^-b$/ && do { $buying_acc = $ARGV[$i++]; next };
-	/^-b(.*)$/ && do { $buying_acc = $1; next };
-	/^-s$/ && do { $search_acc = $ARGV[$i++]; next };
-	/^-s(.*)$/ && do { $search_acc = $1; next };
-	/^-p$/ && do { $iprice_file = $ARGV[$i++]; next };
-	/^-p(.*)$/ && do { $iprice_file = $1; next };
-	/^-w$/ && do { $wallet_balance = $ARGV[$i++]; next };
-	/^-w(.*)$/ && do { $wallet_balance = $1; next };
-	/^-r$/ && do { $rest_time = $ARGV[$i++]; next };
-	/^-r(.*)$/ && do { $rest_time = $1; next };
+	/^-d$/ and $debug = $ARGV[$i++], next;
+	/^-d(.*)$/ and $debug = $1, next;
+	/^-b$/ and $buying_acc = $ARGV[$i++], next;
+	/^-b(.*)$/ and $buying_acc = $1, next;
+	/^-s$/ and $search_acc = $ARGV[$i++], next;
+	/^-s(.*)$/ and $search_acc = $1, next;
+	/^-p$/ and $iprice_file = $ARGV[$i++], next;
+	/^-p(.*)$/ and $iprice_file = $1, next;
+	/^-w$/ and $wallet_balance = $ARGV[$i++], next;
+	/^-w(.*)$/ and $wallet_balance = $1, next;
+	/^-r$/ and $rest_time = $ARGV[$i++], next;
+	/^-r(.*)$/ and $rest_time = $1, next;
+	/^-f$/ and $fork_process = $ARGV[$i++], next;
+	/^-f(.*)$/ and $fork_process = $1, next;
 }
 open($log, ">", "smat.log") or die "open log file failed." if ($debug);
-my ($buying_acc_cookie, $search_acc_cookie);
-open(my $fh, "<", "$buying_acc.cookie") or die $!;
-my @cookie_from_file = <$fh>; close($fh) or die $!;
-for (@cookie_from_file) {
-	chomp;
-	/(.*)=(.*)/;
-	$sessionid = $2 if ($1 eq "sessionid");
+{
+	open($fh, ">", "w") or die $!;
+	print $fh "$wallet_balance\n";
+	close($fh) or die $!;
 }
-$buying_acc_cookie = join ";", @cookie_from_file;
-print $log "buying_acc_cookie=$buying_acc_cookie\n" if ($debug);
-open($fh, "<", "$search_acc.cookie") or die $!;
-@cookie_from_file = <$fh>; close($fh) or die $!;
-chomp for (@cookie_from_file);
-$search_acc_cookie = join ";", @cookie_from_file;
-print $log "search_acc_cookie=$search_acc_cookie\n" if ($debug);
+{
+	open($fh, "<", "$buying_acc.cookie") or die $!;
+	@cookie_from_file = <$fh>; close($fh) or die $!;
+	for (@cookie_from_file) {
+		chomp;
+		/(.*)=(.*)/;
+		$sessionid = $2 if ($1 eq "sessionid");
+	}
+	$buying_acc_cookie = join ";", @cookie_from_file;
+	print $log "buying_acc_cookie=$buying_acc_cookie\n" if ($debug);
+}
+{
+	open($fh, "<", "$search_acc.cookie") or die $!;
+	@cookie_from_file = <$fh>; close($fh) or die $!;
+	chomp for (@cookie_from_file);
+	$search_acc_cookie = join ";", @cookie_from_file;
+	print $log "search_acc_cookie=$search_acc_cookie\n" if $debug;
+}
 my %item_iprice;
-open($fh, "<", "$iprice_file") or die $!;
-for (<$fh>) {
-	chomp;
-	/(.*?)=(.*)/;
-	next if ($1 =~ /^#/);
-	print $log "setting price for $1 to $2\n" if ($debug);
-	$item_iprice{$1} = $2;
+my @child_pids;
+{
+	open($fh, "<", "$iprice_file") or die $!;
+	my @iprice_content = <$fh>; close($fh) or die $!;
+	my $cnt_of_iitem = 0;
+	not $_ =~ /^#/ and $cnt_of_iitem++ for (@iprice_content);
+	print $log "cnt_of_iitem is $cnt_of_iitem.\n" if $debug;
+	use integer;
+	my ($item_per_process, $remainder) = ($cnt_of_iitem / $fork_process, $cnt_of_iitem % $fork_process);
+	no integer;
+	my $cnt_current_item = 0;
+	for (@iprice_content) {
+		next if /^#/;
+		chomp;
+		/(.*?)=(.*)/;
+		$cnt_current_item++;
+		print $log "setting price for $1 to $2, cnt_current_item is $cnt_current_item\n" if $debug;
+		$item_iprice{$1} = $2;
+		if ($cnt_current_item == $item_per_process + ($remainder != 0)) {
+			$remainder-- if ($remainder);
+			my $pid = fork();
+			die $! unless defined $pid;
+			if ($pid) {
+				push @child_pids, $pid;
+				$cnt_current_item = 0, %item_iprice = ();
+			} else {
+				main_loop();
+			}
+		}
+	}
 }
-close($fh) or die $!;
+<STDIN>;
+kill 15, @child_pids;
 sub referer_to_name {
 	(my $referer) = @_;
 	(my $ans) = ($referer =~ m|.*/(.*)|);
@@ -160,9 +191,12 @@ sub proc_unusual_courier {
 						print "effect: $effect color: $color referer: $referer\n";
 						print "condition met, going to buy this item for $total\n";
 						print "post_data is $post_data\n";
-						unless ($status eq "ok") {
+						if ($status eq "ok") {
 							($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 							print "$post_result\nwallet_balance:$wallet_balance\n";
+							open($fh, ">", "w") or die $!;
+							print $fh "$wallet_balance\n";
+							close($fh) or die $!;
 						} elsif ($debug) {
 							print "status is $status.\n";
 						}
@@ -209,9 +243,12 @@ sub proc_usual_item {
 				my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $referer\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
 				print "$referer\ngoing to buy this item for $total, fee $fee, subtotal $subtotal\n";
 				print "post data is $post_data\n";
-				unless ($status eq "ok") {
+				if ($status eq "ok") {
 					($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 					print "$post_result\nwallet_balance:$wallet_balance\n";
+					open($fh, ">", "w") or die $!;
+					print $fh "$wallet_balance\n";
+					close($fh) or die $!;
 				} elsif ($debug) {
 					print "status is $status.\n";
 				}
@@ -246,7 +283,7 @@ sub http_post {
 	my $content_length = length $post_data;
 	my $request = "POST $uri HTTP/1.1\r\n" . "Host: $remote_host\r\n" .
 	    "Connection: keep-alive\r\n" . "User-Agent: Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.31 (KHTML, like Gecko) Chrome/26.0.1410.63 Safari/537.31\r\n" .
-	    "$additional_header" . "Content-Type: application/x-www-form-urlencoded\r\n" .
+	    $additional_header . "Content-Type: application/x-www-form-urlencoded\r\n" .
 	    "Content-Length: $content_length\r\n" . "\r\n" . $post_data;
 	while (1) {
 		send($socket, $request, 0) or die "send failed: $!\n";
@@ -286,19 +323,24 @@ sub http_extract_response {
 	}
 	return ("ok", $ans);
 }
-my $old_sec = time();
-$socket_http_get = new_socket_and_connect_to($remote_ip_addr, 80);
-while (1) {
-	for (keys %item_iprice) {
-		my ($referer, $iprice, $name) = ($_, $item_iprice{$_}, referer_to_name($_));
-		print $log "referer name is $name\n" if ($debug);
-		if ($iprice =~ /func=proc_unusual_courier/) {
-			proc_unusual_courier($referer, $iprice, $name);
-		} else {
-			proc_usual_item($referer, $iprice, $name);
+sub main_loop {
+	my $old_sec = time();
+	$socket_http_get = new_socket_and_connect_to($remote_ip_addr, 80);
+	while (1) {
+		for (keys %item_iprice) {
+			my ($referer, $iprice, $name) = ($_, $item_iprice{$_}, referer_to_name($_));
+			print $log "referer name is $name\n" if ($debug);
+			if ($iprice =~ /func=proc_unusual_courier/) {
+				proc_unusual_courier($referer, $iprice, $name);
+			} else {
+				proc_usual_item($referer, $iprice, $name);
+			}
 		}
+		my $new_sec = time();
+		print $log "seconds for this round is ", $new_sec - $old_sec, ".\n" if ($debug);
+		$old_sec = $new_sec;
+		open($fh, "<", "w") or die $!;
+		chomp($wallet_balance = <$fh>);
+		close($fh) or die $!;
 	}
-	my $new_sec = time();
-	print $log "seconds for this round is ", $new_sec - $old_sec, ".\n" if ($debug);
-	$old_sec = $new_sec;
 }
