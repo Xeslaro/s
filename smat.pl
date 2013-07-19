@@ -52,7 +52,9 @@ open($log, ">", "smat.log") or die "open log file failed." if ($debug);
 	$search_acc_cookie = join ";", @cookie_from_file;
 	print $log "search_acc_cookie=$search_acc_cookie\n" if $debug;
 }
+$SIG{PIPE} = sub {};
 my %item_iprice;
+my $group = 0;
 my @child_pids;
 {
 	open($fh, "<", "$iprice_file") or die $!;
@@ -77,15 +79,19 @@ my @child_pids;
 			die $! unless defined $pid;
 			if ($pid) {
 				push @child_pids, $pid;
-				$cnt_current_item = 0, %item_iprice = ();
+				$cnt_current_item = 0, %item_iprice = (), $group++;
 			} else {
 				main_loop();
 			}
 		}
 	}
 }
-<STDIN>;
-kill 15, @child_pids;
+while (<STDIN>) {
+	chomp;
+	kill("SIGTERM", @child_pids), last if /^q$/;
+	kill("SIGSTOP", @child_pids), next if /^s$/;
+	kill("SIGCONT", @child_pids), next if /^c$/;
+}
 sub referer_to_name {
 	(my $referer) = @_;
 	(my $ans) = ($referer =~ m|.*/(.*)|);
@@ -120,6 +126,8 @@ sub proc_unusual_courier {
 		print $log "going to scanning for $referer\n" if ($debug);
 		my ($status, $html) = http_get(\$socket_http_get, $uri_prefix, "Cookie: $search_acc_cookie\r\n");
 		print $log "status is $status.\n" if $debug;
+		redo unless $status eq "ok";
+		$html = gunzip($html);
 		my $cnt;
 		$cnt = $1 if $html =~ /searchResults_total">(.*?)</;
 		next unless (defined $cnt);
@@ -134,6 +142,8 @@ sub proc_unusual_courier {
 			print $log "going to search for start=$start count=$count\n" if ($debug);
 			my ($status, $json) = http_get(\$socket_http_get, $uri_prefix . "/render/?query=&start=$start&count=$count", "Referer: $referer\r\n" . "Cookie: $search_acc_cookie\r\n");
 			print $log "status is $status.\n" if $debug;
+			redo unless $status eq "ok";
+			$json = gunzip($json);
 			($debug and print $log "warning, json response failed, retrying\n"), redo unless $json =~ /^{"success":true/;
 			$json =~ /total_count":(\d+)/;
 			($debug and print $log "no listing for $referer now\n"), next unless defined $1 && $1 > 0;
@@ -188,7 +198,7 @@ sub proc_unusual_courier {
 						next if ($total > $highest_considered_price);
 						my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
 						my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $referer\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
-						print "effect: $effect color: $color referer: $referer\n";
+						print "effect: ", defined $effect ? $effect : "legacy", " color: $color referer: $referer\n";
 						print "condition met, going to buy this item for $total\n";
 						print "post_data is $post_data\n";
 						if ($status eq "ok") {
@@ -215,6 +225,8 @@ sub proc_usual_item {
 	{
 		my ($status, $json) = http_get(\$socket_http_get, $uri_prefix . "/render/?query=&start=0&count=5", "Referer: $referer\r\n" . "Cookie: $search_acc_cookie\r\n");
 		print $log "status is $status.\n" if $debug;
+		redo unless $status eq "ok";
+		$json = gunzip($json);
 		($debug and print $log "warning, json response failed, retrying\n"), redo unless $json =~ /^{"success":true/;
 		$json =~ /total_count":(\d+)/;
 		($debug and print $log "no listing for $referer now\n"), next unless defined $1 && $1 > 0;
@@ -262,17 +274,38 @@ sub new_socket_and_connect_to {
 	my $ip_and_port = pack_sockaddr_in($port, $ip_addr_numeric);
 	my $proto = getprotobyname("tcp");
 	socket(my $socket, PF_INET, SOCK_STREAM, $proto) or die "open socket failed: $!\n";
-	while (1) { connect($socket, $ip_and_port) and last or print "connect failed: $!, retrying\n" }
+	while (1) { connect($socket, $ip_and_port) and last or $debug and print $log "connect failed: $!, retrying\n" }
 	print $log "new socket connected.\n" if $debug;
 	return $socket;
 }
+sub gunzip {
+	my ($content) = @_;
+	my ($cr, $pw, $pr, $cw);
+	pipe($cr, $pw) or die $!;
+	pipe($pr, $cw) or die $!;
+	my $ans = "";
+	if (fork()) {
+		close($cr) and close($cw) or die $!;
+		print $pw $content;
+		close($pw) or die $!;
+		$ans .= $_ while (<$pr>);
+		close($pr) or die $!;
+		die "no child process or gzip failed\n" if wait() < 0 or $?;
+		return $ans;
+	} else {
+		close($pr) and close($pw) or die $!;
+		open(STDIN, "<&", $cr) or die $!;
+		open(STDOUT, ">&", $cw) or die $!;
+		exec "gzip", "-dc";
+	}
+}
 sub http_get {
 	my ($socket_ref, $uri, $additional_header) = @_;
-	my $request = "GET $uri HTTP/1.1\r\n" . "Host: $remote_host\r\n" .
+	my $request = "GET $uri HTTP/1.1\r\n" . "Host: $remote_host\r\n" . "Accept-Encoding: gzip\r\n" .
 	    "Connection: keep-alive\r\n" . "User-Agent: Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.31 (KHTML, like Gecko) Chrome/26.0.1410.63 Safari/537.31\r\n" .
 	    $additional_header . "\r\n";
 	while (1) {
-		send($$socket_ref, $request, 0) or die "send failed: $!\n";
+		send($$socket_ref, $request, 0);
 		my ($status, $ans) = http_extract_response($$socket_ref);
 		$status =~ /sock.*error/ and close($$socket_ref), $$socket_ref = new_socket_and_connect_to($remote_ip_addr, 80) or return ($status, $ans);
 	}
@@ -286,7 +319,7 @@ sub http_post {
 	    $additional_header . "Content-Type: application/x-www-form-urlencoded\r\n" .
 	    "Content-Length: $content_length\r\n" . "\r\n" . $post_data;
 	while (1) {
-		send($socket, $request, 0) or die "send failed: $!\n";
+		send($socket, $request, 0);
 		my ($status, $ans) = http_extract_response($socket);
 		close($socket);
 		$status =~ /sock.*error/ and $socket = new_socket_and_connect_to($remote_ip_addr, 80) or return ($status, $ans);
@@ -337,7 +370,7 @@ sub main_loop {
 			}
 		}
 		my $new_sec = time();
-		print $log "seconds for this round is ", $new_sec - $old_sec, ".\n" if ($debug);
+		print $log "group $group: seconds for this round is ", $new_sec - $old_sec, ".\n" if ($debug);
 		$old_sec = $new_sec;
 		open($fh, "<", "w") or die $!;
 		chomp($wallet_balance = <$fh>);
