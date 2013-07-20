@@ -306,7 +306,7 @@ sub http_get {
 	    $additional_header . "\r\n";
 	while (1) {
 		send($$socket_ref, $request, 0);
-		my ($status, $ans) = http_extract_response($$socket_ref);
+		my ($status, $ans) = http_extract_response_with_timeout($$socket_ref);
 		$status =~ /sock.*error/ and close($$socket_ref), $$socket_ref = new_socket_and_connect_to($remote_ip_addr, 80) or return ($status, $ans);
 	}
 }
@@ -320,10 +320,21 @@ sub http_post {
 	    "Content-Length: $content_length\r\n" . "\r\n" . $post_data;
 	while (1) {
 		send($socket, $request, 0);
-		my ($status, $ans) = http_extract_response($socket);
+		my ($status, $ans) = http_extract_response_with_timeout($socket);
 		close($socket);
 		$status =~ /sock.*error/ and $socket = new_socket_and_connect_to($remote_ip_addr, 80) or return ($status, $ans);
 	}
+}
+sub http_extract_response_with_timeout {
+	my ($status, $ans);
+	eval {
+		local $SIG{ALRM} = sub { die "timeout\n" };
+		alarm 60;
+		($status, $ans) = http_extract_response(@_);
+		alarm 0
+	};
+	($debug and print $log "group $group timeout.\n"), return "sock_read_timeout_error" if $@;
+	return ($status, $ans);
 }
 sub http_extract_response {
 	my ($socket) = @_;
