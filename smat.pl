@@ -61,13 +61,24 @@ my @child_pids;
 	my @iprice_content = <$fh>; close($fh) or die $!;
 	my $cnt_of_iitem = 0;
 	not $_ =~ /^#/ and $cnt_of_iitem++ for (@iprice_content);
+	for (@iprice_content) {
+		next if /^#/;
+		if (/^func=proc_tournament_item/) {
+			my $pid = fork();
+			die $! unless defined $pid;
+			$group++, push(@child_pids, $pid), next if ($pid);
+			$item_iprice{"tournament"} = $_;
+			main_loop();
+		}
+		$cnt_of_iitem++;
+	}
 	print $log "cnt_of_iitem is $cnt_of_iitem.\n" if $debug;
 	use integer;
 	my ($item_per_process, $remainder) = ($cnt_of_iitem / $fork_process, $cnt_of_iitem % $fork_process);
 	no integer;
 	my $cnt_current_item = 0;
 	for (@iprice_content) {
-		next if /^#/;
+		next if /^#/ or /^func=proc_tournament_item/;
 		chomp;
 		/(.*?)=(.*)/;
 		$cnt_current_item++;
@@ -103,7 +114,7 @@ sub proc_unusual_courier {
 			   "183, 207, 51" => "light_green", "208, 119, 51" => "orange", "130, 50, 237" => "purple", "81, 179, 80" => "green", "0, 151, 206" => "blue", "207, 171, 49" => "gold", "208, 61, 51" => "red");
 	my %effect_abbreviation_to_full = ("ef" => "Ethereal Flame", "dt" => "Directide Corruption", "sf" => "Sunfire",
 					   "ff" => "Frostivus Frost", "lotus" => "Trail of the Lotus Blossom",
-					   "re" => "Resonant Energy");
+					   "re" => "Resonant Energy", "lava" => "");
 	my ($referer, $option, $name) = @_;
 	my %iprice;
 	my $max_price;
@@ -135,6 +146,7 @@ sub proc_unusual_courier {
 		print $log "total item count is $cnt\n" if $debug;
 		loop: for (0..$cnt/50) {
 			use integer;
+			next unless defined $_;
 			my $start = $_ * 50;
 			my $count = ($_ == $cnt/50) ? $cnt%50 : 50;
 			no integer;
@@ -371,13 +383,17 @@ sub main_loop {
 	my $old_sec = time();
 	$socket_http_get = new_socket_and_connect_to($remote_ip_addr, 80);
 	while (1) {
-		for (keys %item_iprice) {
-			my ($referer, $iprice, $name) = ($_, $item_iprice{$_}, referer_to_name($_));
-			print $log "referer name is $name\n" if ($debug);
-			if ($iprice =~ /func=proc_unusual_courier/) {
-				proc_unusual_courier($referer, $iprice, $name);
-			} else {
-				proc_usual_item($referer, $iprice, $name);
+		if (defined $item_iprice{"tournament"}) {
+			proc_tournament_item($item_iprice{"tournament"});
+		} else {
+			for (keys %item_iprice) {
+				my ($referer, $iprice, $name) = ($_, $item_iprice{$_}, referer_to_name($_));
+				print $log "referer name is $name\n" if ($debug);
+				if ($iprice =~ /func=proc_unusual_courier/) {
+					proc_unusual_courier($referer, $iprice, $name);
+				} else {
+					proc_usual_item($referer, $iprice, $name);
+				}
 			}
 		}
 		my $new_sec = time();
@@ -386,5 +402,172 @@ sub main_loop {
 		open($fh, "<", "w") or die $!;
 		chomp($wallet_balance = <$fh>);
 		close($fh) or die $!;
+	}
+}
+sub proc_tournament_item {
+	my (%url_to_team_name, %url_to_tournament_name);
+	my $price_conf = $_[0];
+	my (%player, %tournament, %event, %team, %quality, %event_name_full_to_brief);
+	%event_name_full_to_brief = ("Double Kill" => "dk", "First Blood" => "fb", "Aegis Denial" => "ad", "Triple Kill" => "tk", "Aegis Stolen" => "as", "ULTRA KILL" => "uk", "Victory" => "win",
+				     "Courier Kill" => "ck", "Godlike" => "gl", "Allied Hero Denial" => "ahd", "RAMPAGE!" => "rampage");
+	%url_to_team_name = ("http://cloud-2.steampowered.com/ugc/576738944225927378/441962CFDB10FA188D0AE854E85ED3425B6088FF/" => "alliance",
+			     "http://cloud-2.steampowered.com/ugc/630787216938014761/1A5D6106352A721DBD2760C8F7FCBDA5C00935F8/" => "lgd.cn",
+			     "http://cloud-2.steampowered.com/ugc/612760050488516720/DF0EE7F44746239DBA83B8F4537758ECBB51655E/" => "orange",
+			     "http://cloud-2.steampowered.com/ugc/577870551233852518/EDF47BD55EDFF6269243E5E8D5B96CAF87696D87/" => "dk",
+			     "http://cloud-2.steampowered.com/ugc/939254794963968818/367CD9CD40776AD11C9207049A0351E53C417A71/" => "ig",
+			     "http://cloud-2.steampowered.com/ugc/612767741208345582/613BE7799811FC7174B52E4E96787A53961028AB/" => "zenith",
+			     "http://cloud.steampowered.com/ugc/1118300602706069935/0326BF13EADA3B4BD0826D17A7FBBFB2E53493D6/" => "rs",
+			     "http://cloud-2.steampowered.com/ugc/613896720944358650/05B38027BE5639B71A70B946673E6BFAFC7CC3B2/" => "tongfu",
+			     "http://cloud-2.steampowered.com/ugc/920110421043409228/82E0398179759BD48DA9486A7F10CB1ECE55A713/" => "navi",
+			     "http://cloud-2.steampowered.com/ugc/541804955981794502/4604E42A5D75D9BA2EF91C6C91E4B200241D2273/" => "ehome");
+	%url_to_tournament_name = ("http://media.steampowered.com/apps/570/icons/econ/leagues/subscriptions_premierleague4_ingame.684a4f8668a957ef016844b5ff099f3091d55d68.png" => "tpls4",
+				   "http://media.steampowered.com/apps/570/icons/econ/leagues/subscriptions_g-1_season5_ingame.8f43f5f7dac398ee1f135e789a31419e290428f6.png" => "g1",
+				   "http://media.steampowered.com/apps/570/icons/econ/leagues/subscriptions_international_ingame.67992219b177deb3e7431b76a25b9cb7bcc05232.png" => "ti2",
+				   "http://media.steampowered.com/apps/570/icons/econ/leagues/subscriptions_international_2013_ingame.bdcf612cab48cb613861a4b4e32930d69e29b169.png" => "ti3");
+	for (split /,/, $price_conf) {
+		next if /func=proc_tournament_item/;
+		/(.*?)=(.*)/;
+		my $hash_name = $1;
+		for (split /:/, $2) {
+			no strict "refs";
+			/(.*)=(.*)/;
+			print $log "hash_name: $hash_name option: $1 value: $2\n" if $debug;
+			$hash_name eq "tournament" and $tournament{$1} = $2, next;
+			$hash_name eq "player" and $player{$1} = $2, next;
+			$hash_name eq "team" and $team{$1} = $2, next;
+			$hash_name eq "event" and $event{$1} = $2, next;
+			$hash_name eq "quality" and $quality{$1} = $2, next;
+		}
+	}
+	my $max_considered_price = 0;
+	my @sorted_list = sort { $b <=> $a } values %player;	$max_considered_price += (defined $sorted_list[0] ? $sorted_list[0] : 0) + (defined $sorted_list[1] ? $sorted_list[1] : 0);
+	@sorted_list = sort {$b <=> $a} values %tournament;	$max_considered_price += defined $sorted_list[0] ? $sorted_list[0] : 0;
+	@sorted_list = sort {$b <=> $a} values %event;		$max_considered_price += defined $sorted_list[0] ? $sorted_list[0] : 0;
+	@sorted_list = sort {$b <=> $a} values %team;		$max_considered_price += (defined $sorted_list[0] ? $sorted_list[0] : 0) + (defined $sorted_list[1] ? $sorted_list[1] : 0);
+	@sorted_list = sort {$b <=> $a} values %quality;	$max_considered_price += defined $sorted_list[0] ? $sorted_list[0] : 0;
+	print $log "max_considered_price is $max_considered_price\n" if $debug;
+	{
+		my ($status, $html) = http_get($socket_http_get, "/market/search/render/?query=tournament&start=0&count=1", "Cookie: $search_acc_cookie\r\n" . "Referer: http://steamcommunity.com/market/search/render/?query=tournament\r\n");
+		print $log "status for getting /market/search/render/?query=tournament&start=0&count=1 is $status\n" if $debug;
+		redo unless $status eq "ok";
+		$html = gunzip($html);
+		($debug and print $log "getting info failed\n"), redo unless $html =~ /^{"success":true/;
+		$html =~ /"total_count":(\d+)/;
+		($debug and print $log "couldn't find total_count\n"), redo unless defined $1;
+		print $log "total_count for whole tournament item is $1\n" if $debug;
+		my $cnt_unique_items = $1;
+		my $start = 0;
+		while ($start < $cnt_unique_items) {
+			my $count = 50;
+			$count = $cnt_unique_items - $start if $cnt_unique_items - $start < 50;
+			my ($status, $html) = http_get($socket_http_get, "/market/search/render/?query=tournament&start=$start&count=$count", "Cookie: $search_acc_cookie\r\n" . "Referer: http://steamcommunity.com/market/search/render/?query=tournament\r\n");
+			print $log "status for getting /market/search/render/?query=tournament&start=$start&count=$count is $status\n" if $debug;
+			redo unless $status eq "ok";
+			$html = gunzip($html);
+			($debug and print $log "getting info failed\n"), redo unless $html =~ /^{"success":true/;
+			while ($html =~ /href=\\"(.*?)\\"/g) {
+				my $url = $1;
+				$url =~ s/\\//g;
+				print $log "item url is $url\n" if $debug;
+				next if $url =~ /filter=tournament/;
+				next unless $url =~ /570/;
+				$url =~ m|http://steamcommunity.com(.*)|;
+				next unless defined $1;
+				my $uri = $1;
+				my $name = referer_to_name($url);
+				print $log "item name is $name\n" if $debug;
+				{
+					my ($status, $html) = http_get($socket_http_get, "$uri/render/?query=&start=0&count=1", "Referer: $url\r\n" . "Cookie: $search_acc_cookie\r\n");
+					print $log "status for getting $uri/render/?query=&start=0&count=1 is $status\n" if $debug;
+					redo unless $status eq "ok";
+					$html = gunzip($html);
+					($debug and print $log "getting info failed\n"), redo unless $html =~ /^{"success":true/;
+					$html =~ /"total_count":(\d+)/;
+					($debug and print $log "couldn't find total_count\n"), redo unless defined $1;
+					print $log "total_count for this specific item is $1\n" if $debug;
+					my $cnt_specific_item = $1;
+					my $start = 0;
+					loop: while ($start < $cnt_specific_item) {
+						my $count = 50;
+						$count = $cnt_specific_item - $start if $cnt_specific_item - $start < 50;
+						my ($status, $json) = http_get($socket_http_get, "$uri/render/?query=&start=$start&count=$count", "Referer: $url\r\n" . "Cookie: $search_acc_cookie\r\n");
+						print $log "status for getting $uri/render/?query=&start=$start&count=$count is $status\n" if $debug;
+						redo unless $status eq "ok";
+						$json = gunzip($json);
+						($debug and print $log "getting info failed\n"), redo unless $json =~ /^{"success":true/;
+						($debug and print $log "counldn't find results_html\n"), redo unless $json =~ /"results_html":"(.*?)[^\\]"/;
+						my @html = split /\\n/, $1;
+						my @descriptions = $json =~ /"descriptions":\[(.*?)\]/g;
+						my ($quality_description) = $json =~ /"descriptions":\[.*?\].*?"type":"(.*?)"/;
+						print $log "quality_description is $quality_description\n" if $debug;
+						my $quality_bonus;
+						$quality_description =~ /$_/ and $quality_bonus = $quality{$_}, last for (keys %quality);
+						print $log "quality_bonus is " . (defined $quality_bonus ? $quality_bonus : "undefined") . "\n" if $debug;
+						(my $item_name) = ($json =~ /market_name":"(.*?)"/);
+						print $log "item_name for market is $item_name\n" if $debug;
+						unless (defined $item_name and $name eq $item_name) {
+							print($log "referer name: $name\nitem: $item_name\ndon't match\n") if (defined $item_name and $debug);
+							redo;
+						}
+						my ($total, $subtotal, $description_cnt, $listing_id);
+						$description_cnt = -1;
+						$i = 0;
+						while ($i < @html) {
+							$_ = $html[$i++];
+							if (/BuyMarketListing\('listing', '(.*?)'/) { $description_cnt++, $listing_id = $1; print $log "current listing id $listing_id\n" if ($debug); next; }
+							if (/market_listing_price_with_fee/) {
+								next unless $html[$i++] =~ /(\d+\.\d+)/; $total = $1*100;
+								($debug and print $log "total $total too much, jumping out\n"), last loop if ($total > $max_considered_price || $total > $wallet_balance);
+							}
+							if (/market_listing_price_without_fee/) {
+								next unless $html[$i++] =~ /(\d+\.\d+)/; $subtotal = $1*100;
+								my $fee = $total - $subtotal;
+								$debug and print $log "strange error, description not defined.\n", next loop unless defined $descriptions[$description_cnt];
+								my ($tournament_url, $team_a_url, $team_b_url, $event_name, $tournament_info);
+								my ($tournament_name, $team_a_name, $team_b_name);
+								while ($descriptions[$description_cnt] =~ /"value":"(.*?)(?<!\\)"/g) {
+									$_ = $1;
+									next unless /tournament_info/ and /Tournament Item Details/;
+									$tournament_info = $_;
+									$debug and print $log "can't extract tournament info, perhaps not a tournament item or program bug.\n", next unless m|src=\\"(.*?)\\".*?src=\\"(.*?)\\".*?<b> vs\. <\\/b>.*?src=\\"(.*?)\\".*?<b>(.*?)<\\/b>|;
+									($tournament_url, $team_a_url, $team_b_url, $event_name) = ($1, $2, $3, $4);
+									s/\\//g for ($tournament_url, $team_a_url, $team_b_url);
+								}
+								($debug and print $log "tournament info not extracted, this may indicate either that this item is not tournament or something is wrong in the program.\n"), next unless defined $tournament_url and defined $team_a_url and defined $team_b_url and defined $event_name;
+								my $max_considered_price = 0;
+								my ($a, $b);
+								$max_considered_price += $b if defined ($a = $tournament_name = $url_to_tournament_name{$tournament_url}) and defined ($b = $tournament{$a});
+								$max_considered_price += $b if defined ($a = $team_a_name = $url_to_team_name{$team_a_url}) and defined ($b = $team{$a});
+								$max_considered_price += $b if defined ($a = $team_b_name = $url_to_team_name{$team_b_url}) and defined ($b = $team{$a});
+								$max_considered_price += $b if defined ($a = $event_name_full_to_brief{$event_name}) and defined ($b = $event{$a});
+								$max_considered_price += $quality_bonus if defined $quality_bonus;
+								my $player_bonus_times = 0;
+								$tournament_info =~ /$_/ and $max_considered_price += $player{$_}, $player_bonus_times++, ($debug and print $log "matched player $_\n") for (keys %player);
+								$debug and print $log "matched tournament $tournament_name\n" if defined $tournament_name;
+								$debug and print $log "matched team_a $team_a_name\n" if defined $team_a_name;
+								$debug and print $log "matched team_b $team_b_name\n" if defined $team_b_name;
+								$debug and print $log "event is $event_name\n";
+								print $log "max_considered_price for this tournament item is $max_considered_price\n" if $debug;
+								next if ($total > $max_considered_price);
+								my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
+								my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $url\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
+								print "condition met, going to buy $url\n";
+								if ($status eq "ok") {
+									($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
+									print "$post_result\nwallet_balance:$wallet_balance\n";
+									open($fh, ">", "w") or die $!;
+									print $fh "$wallet_balance\n";
+									close($fh) or die $!;
+								} elsif ($debug) {
+									print "status is $status.\n";
+								}
+							}
+						}
+						$start += $count;
+					}
+				}
+			}
+			$start += $count; 
+		}
 	}
 }
