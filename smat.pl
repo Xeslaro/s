@@ -60,7 +60,6 @@ my @child_pids;
 	open($fh, "<", "$iprice_file") or die $!;
 	my @iprice_content = <$fh>; close($fh) or die $!;
 	my $cnt_of_iitem = 0;
-	not $_ =~ /^#/ and $cnt_of_iitem++ for (@iprice_content);
 	for (@iprice_content) {
 		next if /^#/;
 		if (/^func=proc_tournament_item/) {
@@ -429,7 +428,6 @@ sub proc_tournament_item {
 		/(.*?)=(.*)/;
 		my $hash_name = $1;
 		for (split /:/, $2) {
-			no strict "refs";
 			/(.*)=(.*)/;
 			print $log "hash_name: $hash_name option: $1 value: $2\n" if $debug;
 			$hash_name eq "tournament" and $tournament{$1} = $2, next;
@@ -499,6 +497,7 @@ sub proc_tournament_item {
 						my @html = split /\\n/, $1;
 						my @descriptions = $json =~ /"descriptions":\[(.*?)\]/g;
 						my ($quality_description) = $json =~ /"descriptions":\[.*?\].*?"type":"(.*?)"/;
+						($debug and print $log "strange error, quality_description not defined.\n"), last unless defined $quality_description;
 						print $log "quality_description is $quality_description\n" if $debug;
 						my $quality_bonus;
 						$quality_description =~ /$_/ and $quality_bonus = $quality{$_}, last for (keys %quality);
@@ -522,7 +521,7 @@ sub proc_tournament_item {
 							if (/market_listing_price_without_fee/) {
 								next unless $html[$i++] =~ /(\d+\.\d+)/; $subtotal = $1*100;
 								my $fee = $total - $subtotal;
-								$debug and print $log "strange error, description not defined.\n", next loop unless defined $descriptions[$description_cnt];
+								($debug and print $log "strange error, description not defined.\n"), next loop unless defined $descriptions[$description_cnt];
 								my ($tournament_url, $team_a_url, $team_b_url, $event_name, $tournament_info);
 								my ($tournament_name, $team_a_name, $team_b_name);
 								while ($descriptions[$description_cnt] =~ /"value":"(.*?)(?<!\\)"/g) {
@@ -531,7 +530,7 @@ sub proc_tournament_item {
 									$tournament_info = $_;
 									$debug and print $log "can't extract tournament info, perhaps not a tournament item or program bug.\n", next unless m|src=\\"(.*?)\\".*?src=\\"(.*?)\\".*?<b> vs\. <\\/b>.*?src=\\"(.*?)\\".*?<b>(.*?)<\\/b>|;
 									($tournament_url, $team_a_url, $team_b_url, $event_name) = ($1, $2, $3, $4);
-									s/\\//g for ($tournament_url, $team_a_url, $team_b_url);
+									defined $_ and s/\\//g for ($tournament_url, $team_a_url, $team_b_url);
 								}
 								($debug and print $log "tournament info not extracted, this may indicate either that this item is not tournament or something is wrong in the program.\n"), next unless defined $tournament_url and defined $team_a_url and defined $team_b_url and defined $event_name;
 								my $max_considered_price = 0;
@@ -551,7 +550,7 @@ sub proc_tournament_item {
 								next if ($total > $max_considered_price);
 								my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
 								my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $url\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
-								print "condition met, going to buy $url\n";
+								print "condition met, going to buy $url for total $total\n";
 								if ($status eq "ok") {
 									($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 									print "$post_result\nwallet_balance:$wallet_balance\n";
