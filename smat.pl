@@ -9,6 +9,7 @@ my ($remote_ip_addr, $remote_host) = ("63.228.223.103", "steamcommunity.com");
 my ($i, $buying_acc, $search_acc, $debug, $iprice_file, $sessionid, $wallet_balance, $log, $rest_time);
 my ($socket_http_get, $fork_process, $fh, $buying_acc_cookie, $search_acc_cookie);
 my @cookie_from_file;
+my %cnt_of_item;
 $debug = 0, $fork_process = 1;
 $i = 0;
 while ($i < @ARGV) {
@@ -61,7 +62,8 @@ my @child_pids;
 	my @iprice_content = <$fh>; close($fh) or die $!;
 	my $cnt_of_iitem = 0;
 	for (@iprice_content) {
-		next if /^#/;
+		chomp;
+		next if /^#/ or /^$/;
 		if (/^func=proc_tournament_item/) {
 			my $pid = fork();
 			die $! unless defined $pid;
@@ -77,8 +79,8 @@ my @child_pids;
 	no integer;
 	my $cnt_current_item = 0;
 	for (@iprice_content) {
-		next if /^#/ or /^func=proc_tournament_item/;
 		chomp;
+		next if /^#/ or /^func=proc_tournament_item/ or /^$/;
 		/(.*?)=(.*)/;
 		$cnt_current_item++;
 		print $log "setting price for $1 to $2, cnt_current_item is $cnt_current_item\n" if $debug;
@@ -229,6 +231,17 @@ sub proc_unusual_courier {
 }
 sub proc_usual_item {
 	my ($referer, $iprice, $name) = @_;
+	my $price_bak = $iprice;
+	my $no_match = 0;
+	defined $cnt_of_item{$referer} and not $cnt_of_item{$referer} and return;
+	for (split /,/, $price_bak) {
+		/^(\d+)$/ and $iprice = $1, next;
+		if (/^cnt=(\d+)$/) {
+			not defined $cnt_of_item{$referer} and $cnt_of_item{$referer} = $1, ($debug and print $log "setting cnt of $referer to $1.\n");
+			next;
+		}
+		/^no_match$/ and $no_match = 1;
+	}
 	$referer =~ m|http://.*?(/.*)|;
 	my $uri_prefix = $1;
 	print $log "uri prefix is $uri_prefix.\n" if $debug;
@@ -245,7 +258,7 @@ sub proc_usual_item {
 		($debug and print $log "json response not valid, retrying\n"), redo unless defined $1;
 		my @html = split /\\n/, $1;
 		(my $item_name) = ($json =~ /market_name":"(.*?)"/);
-		unless (defined $item_name and $name eq $item_name) {
+		unless ($no_match or defined $item_name and $name eq $item_name) {
 			print($log "referer name: $name\nitem: $item_name\ndon't match\n") if (defined $item_name and $debug);
 			redo;
 		}
@@ -272,6 +285,7 @@ sub proc_usual_item {
 					open($fh, ">", "w") or die $!;
 					print $fh "$wallet_balance\n";
 					close($fh) or die $!;
+					defined $cnt_of_item{$referer} and $cnt_of_item{$referer}--, print $log "cnt remaining $cnt_of_item{$referer}.\n", (not $cnt_of_item{$referer} and last);
 				} elsif ($debug) {
 					print "status is $status.\n";
 				}
@@ -406,7 +420,7 @@ sub main_loop {
 sub proc_tournament_item {
 	my (%url_to_team_name, %url_to_tournament_name);
 	my $price_conf = $_[0];
-	my (%player, %tournament, %event, %team, %quality, %event_name_full_to_brief);
+	my (%player, %team_of_player, %tournament, %event, %team, %quality, %event_name_full_to_brief);
 	%event_name_full_to_brief = ("Double Kill" => "dk", "First Blood" => "fb", "Aegis Denial" => "ad", "Triple Kill" => "tk", "Aegis Stolen" => "as", "ULTRA KILL" => "uk", "Victory" => "win",
 				     "Courier Kill" => "ck", "Godlike" => "gl", "Allied Hero Denial" => "ahd", "RAMPAGE!" => "rampage");
 	%url_to_team_name = ("http://cloud-2.steampowered.com/ugc/576738944225927378/441962CFDB10FA188D0AE854E85ED3425B6088FF/" => "alliance",
@@ -428,10 +442,17 @@ sub proc_tournament_item {
 		/(.*?)=(.*)/;
 		my $hash_name = $1;
 		for (split /:/, $2) {
-			/(.*)=(.*)/;
+			/(.*?)=(.*)/;
 			print $log "hash_name: $hash_name option: $1 value: $2\n" if $debug;
 			$hash_name eq "tournament" and $tournament{$1} = $2, next;
-			$hash_name eq "player" and $player{$1} = $2, next;
+			if ($hash_name eq "player") {
+				my $player_name = $1;
+				$2 =~ /(.*)=(.*)/;
+				print $log "player name: $player_name team name: $1 price: $2\n" if $debug;
+				$player{$player_name} = $2;
+				$team_of_player{$player_name} = $1;
+				next;
+			}
 			$hash_name eq "team" and $team{$1} = $2, next;
 			$hash_name eq "event" and $event{$1} = $2, next;
 			$hash_name eq "quality" and $quality{$1} = $2, next;
@@ -541,7 +562,7 @@ sub proc_tournament_item {
 								$max_considered_price += $b if defined ($a = $event_name_full_to_brief{$event_name}) and defined ($b = $event{$a});
 								$max_considered_price += $quality_bonus if defined $quality_bonus;
 								my $player_bonus_times = 0;
-								$tournament_info =~ /$_/ and $max_considered_price += $player{$_}, $player_bonus_times++, ($debug and print $log "matched player $_\n") for (keys %player);
+								$tournament_info =~ /$_/ and (defined $team_a_name and $team_a_name eq $team_of_player{$_} or defined $team_b_name and $team_b_name eq $team_of_player{$_}) and $max_considered_price += $player{$_}, $player_bonus_times++, ($debug and print $log "matched player $_\n") for (keys %player);
 								$debug and print $log "matched tournament $tournament_name\n" if defined $tournament_name;
 								$debug and print $log "matched team_a $team_a_name\n" if defined $team_a_name;
 								$debug and print $log "matched team_b $team_b_name\n" if defined $team_b_name;
