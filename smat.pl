@@ -98,6 +98,9 @@ my @child_pids;
 		}
 	}
 }
+$SIG{CHLD} = sub {
+	wait();
+};
 while (<STDIN>) {
 	chomp;
 	kill("SIGTERM", @child_pids), last if /^q$/;
@@ -174,12 +177,13 @@ sub proc_unusual_courier {
 			$i = 0;
 			while ($i < @html) {
 				$_ = $html[$i++];
-				if (/BuyMarketListing\('listing', '(.*?)'/) { $description_cnt++, $listing_id = $1; print $log "current listing id $listing_id\n" if ($debug); next; }
+				if (/BuyMarketListing\('listing', '(.*?)'/) { $listing_id = $1; print $log "current listing id $listing_id\n" if ($debug); next; }
 				if (/market_listing_price_with_fee/) {
 					next unless $html[$i++] =~ /(\d+\.\d+)/; $total = $1*100;
 					last loop if ($total > $max_price || $total > $wallet_balance);
 				}
 				if (/market_listing_price_without_fee/) {
+					$description_cnt++;
 					next unless $html[$i++] =~ /(\d+\.\d+)/; $subtotal = $1*100;
 					my $fee = $total - $subtotal;
 					my ($effect, $color);
@@ -285,7 +289,7 @@ sub proc_usual_item {
 					open($fh, ">", "w") or die $!;
 					print $fh "$wallet_balance\n";
 					close($fh) or die $!;
-					defined $cnt_of_item{$referer} and $cnt_of_item{$referer}--, print $log "cnt remaining $cnt_of_item{$referer}.\n", (not $cnt_of_item{$referer} and last);
+					defined $cnt_of_item{$referer} and $cnt_of_item{$referer}--, print("cnt remaining $cnt_of_item{$referer}.\n"), (not $cnt_of_item{$referer} and last);
 				} elsif ($debug) {
 					print "status is $status.\n";
 				}
@@ -412,6 +416,9 @@ sub main_loop {
 		my $new_sec = time();
 		print $log "group $group: seconds for this round is ", $new_sec - $old_sec, ".\n" if ($debug);
 		$old_sec = $new_sec;
+		my $all_done = 1;
+		(not defined $cnt_of_item{$_} or $cnt_of_item{$_}) and $all_done = 0, last for (keys %item_iprice);
+		print("all work done, quitting.\n"), last if $all_done;
 		open($fh, "<", "w") or die $!;
 		chomp($wallet_balance = <$fh>);
 		close($fh) or die $!;
@@ -534,12 +541,13 @@ sub proc_tournament_item {
 						$i = 0;
 						while ($i < @html) {
 							$_ = $html[$i++];
-							if (/BuyMarketListing\('listing', '(.*?)'/) { $description_cnt++, $listing_id = $1; print $log "current listing id $listing_id\n" if ($debug); next; }
+							if (/BuyMarketListing\('listing', '(.*?)'/) { $listing_id = $1; print $log "current listing id $listing_id\n" if ($debug); next; }
 							if (/market_listing_price_with_fee/) {
 								next unless $html[$i++] =~ /(\d+\.\d+)/; $total = $1*100;
 								($debug and print $log "total $total too much, jumping out\n"), last loop if ($total > $max_considered_price || $total > $wallet_balance);
 							}
 							if (/market_listing_price_without_fee/) {
+								$description_cnt++;
 								next unless $html[$i++] =~ /(\d+\.\d+)/; $subtotal = $1*100;
 								my $fee = $total - $subtotal;
 								($debug and print $log "strange error, description not defined.\n"), next loop unless defined $descriptions[$description_cnt];
@@ -568,7 +576,7 @@ sub proc_tournament_item {
 								$debug and print $log "matched team_b $team_b_name\n" if defined $team_b_name;
 								$debug and print $log "event is $event_name\n";
 								print $log "max_considered_price for this tournament item is $max_considered_price\n" if $debug;
-								next if ($total > $max_considered_price);
+								next if (not defined $team_a_name and not defined $team_b_name or $total > $max_considered_price);
 								my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
 								my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $url\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
 								print "condition met, going to buy $url for total $total\n";
