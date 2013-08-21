@@ -427,7 +427,7 @@ sub main_loop {
 sub proc_tournament_item {
 	my (%url_to_team_name, %url_to_tournament_name);
 	my $price_conf = $_[0];
-	my (%player, %team_of_player, %tournament, %event, %team, %quality, %event_name_full_to_brief);
+	my (%player, %team_of_player, %tournament, %event, %team, %quality, %event_name_full_to_brief, %player_to_profile_uri, %player_to_profile_name);
 	%event_name_full_to_brief = ("Double Kill" => "dk", "First Blood" => "fb", "Aegis Denial" => "ad", "Triple Kill" => "tk", "Aegis Stolen" => "as", "ULTRA KILL" => "uk", "Victory" => "win",
 				     "Courier Kill" => "ck", "Godlike" => "gl", "Allied Hero Denial" => "ahd", "RAMPAGE!" => "rampage");
 	%url_to_team_name = ("http://cloud-2.steampowered.com/ugc/576738944225927378/441962CFDB10FA188D0AE854E85ED3425B6088FF/" => "alliance",
@@ -444,6 +444,10 @@ sub proc_tournament_item {
 				   "http://media.steampowered.com/apps/570/icons/econ/leagues/subscriptions_g-1_season5_ingame.8f43f5f7dac398ee1f135e789a31419e290428f6.png" => "g1",
 				   "http://media.steampowered.com/apps/570/icons/econ/leagues/subscriptions_international_ingame.67992219b177deb3e7431b76a25b9cb7bcc05232.png" => "ti2",
 				   "http://media.steampowered.com/apps/570/icons/econ/leagues/subscriptions_international_2013_ingame.bdcf612cab48cb613861a4b4e32930d69e29b169.png" => "ti3");
+	%player_to_profile_uri = (s4 => "/profiles/76561198001497299", burning => "/profiles/76561198051158462", xb => "/profiles/76561198051963819", dendi => "/id/DendiQ/",
+				  xboct => "/profiles/76561198049891200", zhou => "/profiles/76561198050403391", loda => "/profiles/76561198061761348",
+				  hao => "/profiles/76561198048774243", mushi => "/profiles/76561198050137285", bulldog => "/profiles/76561198036748162",
+				  akke => "/profiles/76561198001554683", mu => "/id/Piglara/", chuan => "/id/bestdotachuan", yyf => "/profiles/76561198050310737", 430 => "/profiles/76561198048850805");
 	for (split /,/, $price_conf) {
 		next if /func=proc_tournament_item/;
 		/(.*?)=(.*)/;
@@ -458,6 +462,12 @@ sub proc_tournament_item {
 				print $log "player name: $player_name team name: $1 price: $2\n" if $debug;
 				$player{$player_name} = $2;
 				$team_of_player{$player_name} = $1;
+				{
+					my ($status, $html) = http_get($socket_http_get, "$player_to_profile_uri{$player_name}", "Cookie: $search_acc_cookie\r\n");
+					redo unless $status eq "ok";
+					$html = gunzip($html);
+					$html =~ m|<title>Steam Community :: (.*)</title>| and ($debug and print $log "player $player_name profile name setting to $1.\n"), $player_to_profile_name{$player_name} = $1 or print("pay attension: profile name not defined.\n"), redo;
+				}
 				next;
 			}
 			$hash_name eq "team" and $team{$1} = $2, next;
@@ -570,7 +580,7 @@ sub proc_tournament_item {
 								$max_considered_price += $b if defined ($a = $event_name_full_to_brief{$event_name}) and defined ($b = $event{$a});
 								$max_considered_price += $quality_bonus if defined $quality_bonus;
 								my $player_bonus_times = 0;
-								$tournament_info =~ /$_/ and (defined $team_a_name and $team_a_name eq $team_of_player{$_} or defined $team_b_name and $team_b_name eq $team_of_player{$_}) and $max_considered_price += $player{$_}, $player_bonus_times++, ($debug and print $log "matched player $_\n") for (keys %player);
+								defined $player_to_profile_name{$_} and $tournament_info =~ /\Q$player_to_profile_name{$_}\E/ and (defined $team_a_name and $team_a_name eq $team_of_player{$_} or defined $team_b_name and $team_b_name eq $team_of_player{$_}) and $max_considered_price += $player{$_}, $player_bonus_times++, ($debug and print $log "matched player $_\n") for (keys %player);
 								$debug and print $log "matched tournament $tournament_name\n" if defined $tournament_name;
 								$debug and print $log "matched team_a $team_a_name\n" if defined $team_a_name;
 								$debug and print $log "matched team_b $team_b_name\n" if defined $team_b_name;
