@@ -113,6 +113,87 @@ sub referer_to_name {
 	$ans =~ s/%([A-F0-9]{2})/chr hex $1/ge;
 	return $ans;
 }
+sub proc_unusual_hat {
+	my ($referer, $option, $name) = @_;
+	my %effect_to_scaler = ("Harvest Moon" => 5, "Cloudy Moon" => 5, "It's A Secret To Everybody" => 5, "Burning Flames" => 5,
+				"Roboactive" => 4, "Kill-a-Watt" => 4, "Misty Skull" => 4, "Anti-Freeze" => 4, "Scorching Flames" => 4,
+				"Phosphorous" => 4, "Stormy 13th Hour" => 4, "Miami Nights" => 4, "Disco Beat Down" => 4, "Time Warp" => 4, "Overclocked" => 4,
+				"Sunbeams" => 3, "Powersurge" => 3, "Flaming Lantern" => 3, "Knifestorm" => 3, "Circling Heart" => 3, "Stormy 13th Hour" => 3, "Sulphurous" => 3, "Electrostatic" => 3,
+				"Green Energy" => 3, "Purple Energy" => 3, "Haunted Ghosts" => 3, "Aces High" => 3, "Blizzardy Storm" => 3, "Green Black Hole" => 3, "Cloud 9" => 3,
+				"Cauldron Bubbles" => 2, "Eerie Orbiting Fire" => 2, "Vivid Plasma" => 2, "Stormy Storm" => 2,
+				"Green Confetti" => 1, "Circling Peace Sign" => 1, "Searing Plasma" => 1, "Circling TF Logo" => 1,
+				"Smoking" => 1, "Purple Confetti" => 1, "Orbiting Fire" => 1, "Orbiting Planets" => 1, "Steaming" => 1,
+				"Bubbling" => 1, "Massed Files" => 1, "Nuts n' Bolts" => 1);
+	my $base_price;
+	for (split /,/, $option) {
+		next if /func=proc_unusual_hat/;
+		/^(\d+)$/ and $base_price = $1, next;
+		/(.*)=(.*)/ and ($debug and print $log "setting scaler of $1 to $2.\n"), $effect_to_scaler{$1} = $2, next;
+		print "invalid option $_.\n";
+	}
+	my $max_price = 0;
+	$max_price = $max_price > $_ ? $max_price : $_ for (values %effect_to_scaler);
+	$max_price *= $base_price;
+	$debug and print $log "max_price for this is $max_price.\n";
+	$referer =~ m|http://steamcommunity.com(.*)| or die "not able to obtain uri.\n";
+	my $uri = $1;
+	{
+		my ($status, $html) = http_get($socket_http_get, "$uri/render/?query=&start=0&count=1", "Referer: $referer\r\n" . "Cookie: $search_acc_cookie\r\n");
+		$debug and print $log "status for getting $uri/render/?query=&start=0&count=1 is $status.\n";
+		my $cnt_of_this;
+		$status eq "ok" and $html = gunzip($html) and $html =~ /^{"success":true/ and $html =~ /"total_count":(\d+)/ and $cnt_of_this = $1 or redo;
+		$debug and print $log "total_count for this is $cnt_of_this.\n";
+		my $start = 0;
+		loop: while ($start < $cnt_of_this) {
+			my $count = 50;
+			$count = $cnt_of_this - $start if $cnt_of_this - $start < 50;
+			my ($status, $json) = http_get($socket_http_get, "$uri/render/?query=&start=$start&count=$count", "Referer: $referer\r\n" . "Cookie: $search_acc_cookie\r\n");
+			$debug and print $log "status for getting $uri/render/?query=&start=$start&count=$count is $status.\n";
+			$status eq "ok" and $json = gunzip($json) and $json =~ /^{"success":true/ and $json =~ /"results_html":"(.*?)[^\\]"/ and my @html = split /\\n/, $1 and (my $item_name) = ($json =~ /market_name":"(.*?)"/) or redo;
+			redo unless $name eq $item_name;
+			my @descriptions = $json =~ /descriptions":\[(.*?)\]/g;
+			my ($total, $subtotal, $description_cnt, $listing_id, $i);
+			$description_cnt = -1, $i = 0;
+			while ($i < @html) {
+				$_ = $html[$i++];
+				if (/BuyMarketListing\('listing', '(.*?)'/) { $listing_id = $1; print $log "current listing id $listing_id\n" if ($debug); next; }
+				if (/market_listing_price_with_fee/) {
+					next unless $html[$i++] =~ /(\d+\.\d+)/; $total = $1*100;
+					last loop if ($total > $max_price || $total > $wallet_balance);
+				}
+				if (/market_listing_price_without_fee/) {
+					$description_cnt++;
+					next unless $html[$i++] =~ /(\d+\.\d+)/; $subtotal = $1*100;
+					my $fee = $total - $subtotal;
+					last unless defined $descriptions[$description_cnt];
+					my $scaler = 1;
+					my $effect;
+					while ($descriptions[$description_cnt] =~ /value":"(.*?)"/g) {
+						$_ = $1;
+						/Effect: (.*)/ and $effect = $1 and defined $effect_to_scaler{$1} and $effect_to_scaler{$1} > $scaler and $scaler = $effect_to_scaler{$1};
+					}
+					my $max_considered_price = $base_price * $scaler;
+					$debug and print $log "effect is $effect, scaler is $scaler, max_considered_price is $max_considered_price.\n";
+					next if $total > $max_considered_price;
+					my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
+					my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $referer\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
+					print "condition met, going to buy $referer with effect $effect for $total.\n";
+					print "post_data is $post_data.\n";
+					if ($status eq "ok") {
+						($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
+						print "$post_result\nwallet_balance:$wallet_balance\n";
+						open($fh, ">", "w") or die $!;
+						print $fh "$wallet_balance\n";
+						close($fh) or die $!;
+					} else {
+						print "status is $status.\n";
+					}
+				}
+			}
+			$start += $count;
+		}
+	}
+}
 sub proc_unusual_courier {
 	my %usual_color = ("61, 104, 196" => "indigo", "130, 50, 207" => "violet", "74, 183, 141" => "teal", "255, 255, 255" => "trivial",
 			   "183, 207, 51" => "light_green", "208, 119, 51" => "orange", "130, 50, 237" => "purple", "81, 179, 80" => "green", "0, 151, 206" => "blue", "207, 171, 49" => "gold", "208, 61, 51" => "red");
@@ -224,7 +305,7 @@ sub proc_unusual_courier {
 							open($fh, ">", "w") or die $!;
 							print $fh "$wallet_balance\n";
 							close($fh) or die $!;
-						} elsif ($debug) {
+						} else {
 							print "status is $status.\n";
 						}
 					}
@@ -408,6 +489,8 @@ sub main_loop {
 				print $log "referer name is $name\n" if ($debug);
 				if ($iprice =~ /func=proc_unusual_courier/) {
 					proc_unusual_courier($referer, $iprice, $name);
+				} elsif ($iprice =~ /func=proc_unusual_hat/) {
+					proc_unusual_hat($referer, $iprice, $name);
 				} else {
 					proc_usual_item($referer, $iprice, $name);
 				}
@@ -466,7 +549,7 @@ sub proc_tournament_item {
 					my ($status, $html) = http_get($socket_http_get, "$player_to_profile_uri{$player_name}", "Cookie: $search_acc_cookie\r\n");
 					redo unless $status eq "ok";
 					$html = gunzip($html);
-					$html =~ m|<title>Steam Community :: (.*)</title>| and ($debug and print $log "player $player_name profile name setting to $1.\n"), $player_to_profile_name{$player_name} = $1 or print("pay attension: profile name not defined.\n"), redo;
+					$html =~ m|<title>Steam Community :: (.*)</title>| and ($debug and print $log "player $player_name profile name setting to $1.\n"), $player_to_profile_name{$player_name} = $1 or redo;
 				}
 				next;
 			}
@@ -560,7 +643,7 @@ sub proc_tournament_item {
 								$description_cnt++;
 								next unless $html[$i++] =~ /(\d+\.\d+)/; $subtotal = $1*100;
 								my $fee = $total - $subtotal;
-								($debug and print $log "strange error, description not defined.\n"), next loop unless defined $descriptions[$description_cnt];
+								($debug and print $log "strange error, description not defined.\n"), last unless defined $descriptions[$description_cnt];
 								my ($tournament_url, $team_a_url, $team_b_url, $event_name, $tournament_info);
 								my ($tournament_name, $team_a_name, $team_b_name);
 								while ($descriptions[$description_cnt] =~ /"value":"(.*?)(?<!\\)"/g) {
@@ -596,7 +679,7 @@ sub proc_tournament_item {
 									open($fh, ">", "w") or die $!;
 									print $fh "$wallet_balance\n";
 									close($fh) or die $!;
-								} elsif ($debug) {
+								} else {
 									print "status is $status.\n";
 								}
 							}
