@@ -4,7 +4,6 @@ Steamcommunity Market Auto Trader
 =cut
 use strict;
 use warnings;
-use Socket;
 my ($remote_ip_addr, $remote_host) = ("63.228.223.103", "steamcommunity.com");
 my ($i, $buying_acc, $search_acc, $debug, $iprice_file, $sessionid, $wallet_balance, $log, $rest_time);
 my ($socket_http_get, $fork_process, $fh, $buying_acc_cookie, $search_acc_cookie);
@@ -380,10 +379,9 @@ sub proc_usual_item {
 }
 sub new_socket_and_connect_to {
 	my ($ip_addr_ascii, $port) = @_;
-	my $ip_addr_numeric = inet_aton($ip_addr_ascii) || die "invalid ip address\n";
-	my $ip_and_port = pack_sockaddr_in($port, $ip_addr_numeric);
-	my $proto = getprotobyname("tcp");
-	socket(my $socket, PF_INET, SOCK_STREAM, $proto) or die "open socket failed: $!\n";
+	$ip_addr_ascii =~ /(\d+).(\d+).(\d+).(\d+)/ or die "invalid ip address\n";
+	my $ip_and_port = pack("CxnC4x8", 2, 80, $1, $2, $3, $4);
+	socket(my $socket, 2, 1, 0) or die "open socket failed: $!\n";
 	while (1) { connect($socket, $ip_and_port) and last or $debug and print $log "connect failed: $!, retrying\n" }
 	print $log "new socket connected.\n" if $debug;
 	return $socket;
