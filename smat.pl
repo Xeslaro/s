@@ -7,12 +7,21 @@ use warnings;
 my ($remote_ip_addr, $remote_host) = ("63.228.223.103", "steamcommunity.com");
 my ($i, $buying_acc, $search_acc, $debug, $iprice_file, $sessionid, $wallet_balance, $log, $rest_time);
 my ($socket_http_get, $fork_process, $fh, $buying_acc_cookie, $search_acc_cookie);
+my ($sell_mode, $sell_account, $profile_uri, $appid, $contextid, $sell_item_name, $sell_cnt, $sell_price);
 my @cookie_from_file;
 my %cnt_of_item;
 $debug = 0, $fork_process = 1;
 $i = 0;
 while ($i < @ARGV) {
 	$_ = $ARGV[$i++];
+	/^-sell_mode$/ and $sell_mode = 1, next;
+	/^-sell_account(.*)$/ and $sell_account = $1 ? $1 : $ARGV[$i++], next;
+	/^-profile_uri(.*)$/ and $profile_uri = $1 ? $1 : $ARGV[$i++], next;
+	/^-appid(.*)$/ and $appid = $1 ? $1 : $ARGV[$i++], next;
+	/^-contextid(.*)$/ and $contextid = $1 ? $1 : $ARGV[$i++], next;
+	/^-sell_item_name(.*)$/ and $sell_item_name = $1 ? $1 : $ARGV[$i++], next;
+	/^-sell_price(.*)$/ and $sell_price = $1 ? $1 : $ARGV[$i++], next;
+	/^-sell_cnt(.*)$/ and $sell_cnt = $1 ? $1 : $ARGV[$i++], next;
 	/^-d$/ and $debug = $ARGV[$i++], next;
 	/^-d(.*)$/ and $debug = $1, next;
 	/^-b$/ and $buying_acc = $ARGV[$i++], next;
@@ -28,6 +37,39 @@ while ($i < @ARGV) {
 	/^-f$/ and $fork_process = $ARGV[$i++], next;
 	/^-f(.*)$/ and $fork_process = $1, next;
 }
+sub do_sell {
+	open($fh, "<", "$sell_account.cookie") or die $!;
+	my $sell_account_cookie = "";
+	while (<$fh>) {
+		chomp;
+		$sell_account_cookie .= $_ . ";";
+		/(.*?)=(.*)/ and $1 eq "sessionid" and $sessionid = $2;
+	}
+	close($fh) or die $!;
+	$sell_account_cookie =~ s/;$//;
+	print "sessionid=$sessionid sell_account_cookie=$sell_account_cookie.\n";
+	my $socket = new_socket_and_connect_to($remote_ip_addr, 80);
+	{
+		my ($status, $json) = http_get(\$socket, "$profile_uri/inventory/json/$appid/$contextid", "Referer: http://steamcommunity.com$profile_uri/inventory\r\n" . "Cookie: $sell_account_cookie\r\n");
+		print "status for getting inventory json is $status.\n";
+		redo unless $status eq "ok";
+		$json = gunzip($json);
+		while ($json =~ /"id":"(\d+)","classid":"(\d+)","instanceid":"(\d+)"/g) {
+			my ($assetid, $pattern) = ($1, "$2_$3");
+			$json =~ /$pattern.*?"market_name":"(.*?)"/ or print("warning, correspond description not found.\n"), next;
+			next unless $1 eq $sell_item_name and (not defined $sell_cnt or $sell_cnt);
+			defined $sell_cnt and $sell_cnt--;
+			my $post_data = "sessionid=$sessionid&appid=$appid&contextid=$contextid&assetid=$assetid&amount=1&price=$sell_price";
+			{
+				my ($status, $post_result) = http_post_with_socket_ref_not_closing_socket(\$socket, "/market/sellitem", "Referer: http://steamcommunity.com$profile_uri/inventory\r\n" . "Cookie: $sell_account_cookie\r\n", $post_data);
+				print "post_data is $post_data, status is $status.\n";
+				redo unless $status eq "ok";
+			}
+		}
+	}
+	exit 0;
+}
+do_sell() if defined $sell_mode;
 open($log, ">", "smat.log") or die "open log file failed." if ($debug);
 {
 	open($fh, ">", "w") or die $!;
@@ -433,6 +475,19 @@ sub http_post {
 		$status =~ /sock.*error/ and $socket = new_socket_and_connect_to($remote_ip_addr, 80) or return ($status, $ans);
 	}
 }
+sub http_post_with_socket_ref_not_closing_socket {
+	my ($socket_ref, $uri, $additional_header, $post_data) = @_;
+	my $content_length = length $post_data;
+	my $request = "POST $uri HTTP/1.1\r\n" . "Host: $remote_host\r\n" .
+	    "Connection: keep-alive\r\n" . "User-Agent: Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.31 (KHTML, like Gecko) Chrome/26.0.1410.63 Safari/537.31\r\n" .
+	    $additional_header . "Content-Type: application/x-www-form-urlencoded\r\n" .
+	    "Content-Length: $content_length\r\n" . "\r\n" . $post_data;
+	while (1) {
+		send($$socket_ref, $request, 0);
+		my ($status, $ans) = http_extract_response_with_timeout($$socket_ref);
+		$status =~ /sock.*error/ and close($$socket_ref), $$socket_ref = new_socket_and_connect_to($remote_ip_addr, 80) or return ($status, $ans);
+	}
+}
 sub http_extract_response_with_timeout {
 	my ($status, $ans);
 	eval {
@@ -477,8 +532,8 @@ sub http_extract_response {
 }
 sub main_loop {
 	my $old_sec = time();
-	$socket_http_get = new_socket_and_connect_to($remote_ip_addr, 80);
 	while (1) {
+		$socket_http_get = new_socket_and_connect_to($remote_ip_addr, 80);
 		if (defined $item_iprice{"tournament"}) {
 			proc_tournament_item($item_iprice{"tournament"});
 		} else {
@@ -494,6 +549,7 @@ sub main_loop {
 				}
 			}
 		}
+		close($socket_http_get) or die $!;
 		my $new_sec = time();
 		print $log "group $group: seconds for this round is ", $new_sec - $old_sec, ".\n" if ($debug);
 		$old_sec = $new_sec;
