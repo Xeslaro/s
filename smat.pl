@@ -5,12 +5,12 @@ Steamcommunity Market Auto Trader
 use strict;
 use warnings;
 my ($remote_ip_addr, $remote_host) = ("63.228.223.103", "steamcommunity.com");
-my ($i, $buying_acc, $search_acc, $debug, $iprice_file, $sessionid, $wallet_balance, $log, $rest_time);
+my ($i, $buying_acc, $search_acc, $debug, $iprice_file, $sessionid, $wallet_balance, $log, $rest_time, $item_per_process_outside);
 my ($socket_http_get, $fork_process, $fh, $buying_acc_cookie, $search_acc_cookie);
 my ($sell_mode, $sell_account, $profile_uri, $appid, $contextid, $sell_item_name, $sell_cnt, $sell_price);
 my @cookie_from_file;
 my %cnt_of_item;
-$debug = 0, $fork_process = 1;
+$debug = 0, $fork_process = 1, $rest_time = 0;
 $i = 0;
 while ($i < @ARGV) {
 	$_ = $ARGV[$i++];
@@ -102,22 +102,28 @@ my @child_pids;
 	open($fh, "<", "$iprice_file") or die $!;
 	my @iprice_content = <$fh>; close($fh) or die $!;
 	my $cnt_of_iitem = 0;
+	my $tournament_option;
 	for (@iprice_content) {
 		chomp;
 		next if /^#/ or /^$/;
-		if (/^func=proc_tournament_item/) {
-			my $pid = fork();
-			die $! unless defined $pid;
-			$group++, push(@child_pids, $pid), next if ($pid);
-			$item_iprice{"tournament"} = $_;
-			main_loop();
-		}
+		$tournament_option = $_, next if (/^func=proc_tournament_item/);
 		$cnt_of_iitem++;
 	}
 	print $log "cnt_of_iitem is $cnt_of_iitem.\n" if $debug;
 	use integer;
 	my ($item_per_process, $remainder) = ($cnt_of_iitem / $fork_process, $cnt_of_iitem % $fork_process);
+	$item_per_process_outside = $item_per_process;
 	no integer;
+	if (defined $tournament_option) {
+		my $pid = fork();
+		die $! unless defined $pid;
+		if ($pid) {
+			$group++, push(@child_pids, $pid);
+		} else {
+			$item_iprice{"tournament"} = $tournament_option;
+			main_loop();
+		}
+	}
 	my $cnt_current_item = 0;
 	for (@iprice_content) {
 		chomp;
@@ -217,17 +223,17 @@ sub proc_unusual_hat {
 					$debug and print $log "effect is $effect, scaler is $scaler, max_considered_price is $max_considered_price.\n";
 					next if $total > $max_considered_price;
 					my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
-					my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $referer\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
+					my $post_result = qx(wget --no-check-certificate -U chrome --post-data="$post_data" --header="Cookie: $buying_acc_cookie" --header="Referer: $referer" https://steamcommunity.com/market/buylisting/$listing_id -O - 2>/dev/null);
 					print "condition met, going to buy $referer with effect $effect for $total.\n";
 					print "post_data is $post_data.\n";
-					if ($status eq "ok") {
+					unless ($?) {
 						($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 						print "$post_result\nwallet_balance:$wallet_balance\n";
 						open($fh, ">", "w") or die $!;
 						print $fh "$wallet_balance\n";
 						close($fh) or die $!;
 					} else {
-						print "status is $status.\n";
+						print "failed.\n";
 					}
 				}
 			}
@@ -336,18 +342,18 @@ sub proc_unusual_courier {
 						print $log "highest_considered_price is $highest_considered_price\n" if ($debug);
 						next if ($total > $highest_considered_price);
 						my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
-						my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $referer\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
+						my $post_result = qx(wget --no-check-certificate -U chrome --post-data="$post_data" --header="Cookie: $buying_acc_cookie" --header="Referer: $referer" https://steamcommunity.com/market/buylisting/$listing_id -O - 2>/dev/null);
 						print "effect: ", defined $effect ? $effect : "legacy", " color: $color referer: $referer\n";
 						print "condition met, going to buy this item for $total\n";
 						print "post_data is $post_data\n";
-						if ($status eq "ok") {
+						unless ($?) {
 							($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 							print "$post_result\nwallet_balance:$wallet_balance\n";
 							open($fh, ">", "w") or die $!;
 							print $fh "$wallet_balance\n";
 							close($fh) or die $!;
 						} else {
-							print "status is $status.\n";
+							print "failed.\n";
 						}
 					}
 				}
@@ -402,18 +408,18 @@ sub proc_usual_item {
 				next unless $html[$i++] =~ /(\d+\.\d+)/; $subtotal = $1*100;
 				my $fee = $total - $subtotal;
 				my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
-				my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $referer\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
+				my $post_result = qx(wget --no-check-certificate -U chrome --post-data="$post_data" --header="Cookie: $buying_acc_cookie" --header="Referer: $referer" https://steamcommunity.com/market/buylisting/$listing_id -O - 2>/dev/null);
 				print "$referer\ngoing to buy this item for $total, fee $fee, subtotal $subtotal\n";
 				print "post data is $post_data\n";
-				if ($status eq "ok") {
+				unless ($?) {
 					($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 					print "$post_result\nwallet_balance:$wallet_balance\n";
 					open($fh, ">", "w") or die $!;
 					print $fh "$wallet_balance\n";
 					close($fh) or die $!;
 					defined $cnt_of_item{$referer} and $cnt_of_item{$referer}--, print("cnt remaining $cnt_of_item{$referer}.\n"), (not $cnt_of_item{$referer} and last);
-				} elsif ($debug) {
-					print "status is $status.\n";
+				} else {
+					print "failed.\n";
 				}
 			}
 		}
@@ -531,9 +537,9 @@ sub http_extract_response {
 	return ("ok", $ans);
 }
 sub main_loop {
-	my $old_sec = time();
+	$socket_http_get = new_socket_and_connect_to($remote_ip_addr, 80);
 	while (1) {
-		$socket_http_get = new_socket_and_connect_to($remote_ip_addr, 80);
+		my $old_sec = time();
 		if (defined $item_iprice{"tournament"}) {
 			proc_tournament_item($item_iprice{"tournament"});
 		} else {
@@ -549,13 +555,12 @@ sub main_loop {
 				}
 			}
 		}
-		close($socket_http_get) or die $!;
 		my $new_sec = time();
 		print $log "group $group: seconds for this round is ", $new_sec - $old_sec, ".\n" if ($debug);
-		$old_sec = $new_sec;
 		my $all_done = 1;
 		(not defined $cnt_of_item{$_} or $cnt_of_item{$_}) and $all_done = 0, last for (keys %item_iprice);
 		print("all work done, quitting.\n"), last if $all_done;
+		sleep $rest_time;
 		open($fh, "<", "w") or die $!;
 		chomp($wallet_balance = <$fh>);
 		close($fh) or die $!;
@@ -630,6 +635,7 @@ sub proc_tournament_item {
 		print $log "total_count for whole tournament item is $1\n" if $debug;
 		my $cnt_unique_items = $1;
 		my $start = 0;
+		my $cnt_from_last_sleep = 0;
 		while ($start < $cnt_unique_items) {
 			my $count = 50;
 			$count = $cnt_unique_items - $start if $cnt_unique_items - $start < 50;
@@ -639,6 +645,7 @@ sub proc_tournament_item {
 			$html = gunzip($html);
 			($debug and print $log "getting info failed\n"), redo unless $html =~ /^{"success":true/;
 			while ($html =~ /href=\\"(.*?)\\"/g) {
+				sleep $rest_time, $cnt_from_last_sleep = 0 if $cnt_from_last_sleep == $item_per_process_outside;
 				my $url = $1;
 				$url =~ s/\\//g;
 				print $log "item url is $url\n" if $debug;
@@ -717,7 +724,8 @@ sub proc_tournament_item {
 								$max_considered_price += $b if defined ($a = $event_name_full_to_brief{$event_name}) and defined ($b = $event{$a});
 								$max_considered_price += $quality_bonus if defined $quality_bonus;
 								my $player_bonus_times = 0;
-								defined $player_to_profile_name{$_} and $tournament_info =~ /\Q$player_to_profile_name{$_}\E/ and (defined $team_a_name and $team_a_name eq $team_of_player{$_} or defined $team_b_name and $team_b_name eq $team_of_player{$_}) and $max_considered_price += $player{$_}, $player_bonus_times++, ($debug and print $log "matched player $_\n") for (keys %player);
+								my @matched_player;
+								defined $player_to_profile_name{$_} and $tournament_info =~ /\Q$player_to_profile_name{$_}\E/ and (defined $team_a_name and $team_a_name eq $team_of_player{$_} or defined $team_b_name and $team_b_name eq $team_of_player{$_}) and $max_considered_price += $player{$_}, $player_bonus_times++, ($debug and print $log "matched player $_\n"), push @matched_player, $_ for (keys %player);
 								$debug and print $log "matched tournament $tournament_name\n" if defined $tournament_name;
 								$debug and print $log "matched team_a $team_a_name\n" if defined $team_a_name;
 								$debug and print $log "matched team_b $team_b_name\n" if defined $team_b_name;
@@ -725,22 +733,27 @@ sub proc_tournament_item {
 								print $log "max_considered_price for this tournament item is $max_considered_price\n" if $debug;
 								next if (not defined $team_a_name and not defined $team_b_name or $total > $max_considered_price);
 								my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
-								my ($status, $post_result) = http_post("/market/buylisting/$listing_id", "Referer: $url\r\n" . "Cookie: $buying_acc_cookie\r\n", $post_data);
+								my $post_result = qx(wget --no-check-certificate -U chrome --post-data="$post_data" --header="Cookie: $buying_acc_cookie" --header="Referer: $url" https://steamcommunity.com/market/buylisting/$listing_id -O - 2>/dev/null);
 								print "condition met, going to buy $url for total $total\n";
-								if ($status eq "ok") {
+								print "matched team_a $team_a_name\n" if defined $team_a_name;
+								print "matched team_b $team_b_name\n" if defined $team_b_name;
+								print "event is $event_name\n";
+								print "matched player $_.\n" for (@matched_player);
+								unless ($?) {
 									($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 									print "$post_result\nwallet_balance:$wallet_balance\n";
 									open($fh, ">", "w") or die $!;
 									print $fh "$wallet_balance\n";
 									close($fh) or die $!;
 								} else {
-									print "status is $status.\n";
+									print "failed.\n";
 								}
 							}
 						}
 						$start += $count;
 					}
 				}
+				$cnt_from_last_sleep++;
 			}
 			$start += $count; 
 		}
