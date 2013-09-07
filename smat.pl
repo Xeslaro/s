@@ -50,7 +50,7 @@ sub do_sell {
 	print "sessionid=$sessionid sell_account_cookie=$sell_account_cookie.\n";
 	my $socket = new_socket_and_connect_to($remote_ip_addr, 80);
 	{
-		my ($status, $json) = http_get(\$socket, "$profile_uri/inventory/json/$appid/$contextid", "Referer: http://steamcommunity.com$profile_uri/inventory\r\n" . "Cookie: $sell_account_cookie\r\n");
+		my ($status, $json) = http_get(\$socket, "$profile_uri/inventory/json/$appid/$contextid", "Referer: http://steamcommunity.com$profile_uri/inventory\r\n");
 		print "status for getting inventory json is $status.\n";
 		redo unless $status eq "ok";
 		$json = gunzip($json);
@@ -61,10 +61,11 @@ sub do_sell {
 			defined $sell_cnt and $sell_cnt--;
 			my $post_data = "sessionid=$sessionid&appid=$appid&contextid=$contextid&assetid=$assetid&amount=1&price=$sell_price";
 			{
-				my ($status, $post_result) = http_post_with_socket_ref_not_closing_socket(\$socket, "/market/sellitem", "Referer: http://steamcommunity.com$profile_uri/inventory\r\n" . "Cookie: $sell_account_cookie\r\n", $post_data);
-				print "post_data is $post_data, status is $status.\n";
-				redo unless $status eq "ok";
+				qx(wget --no-check-certificate -U chrome --post-data="$post_data" --header="Cookie: $sell_account_cookie" --header="Referer: http://steamcommunity.com$profile_uri/inventory" https://steamcommunity.com/market/sellitem -O - 2>/dev/null);
+				print "post_data is $post_data, status is $?.\n";
+				redo unless $?;
 			}
+			sleep 1;
 		}
 	}
 	exit 0;
@@ -185,7 +186,7 @@ sub proc_unusual_hat {
 	$referer =~ m|http://steamcommunity.com(.*)| or die "not able to obtain uri.\n";
 	my $uri = $1;
 	{
-		my ($status, $html) = http_get($socket_http_get, "$uri/render/?query=&start=0&count=1", "Referer: $referer\r\n" . "Cookie: $search_acc_cookie\r\n");
+		my ($status, $html) = http_get(\$socket_http_get, "$uri/render/?query=&start=0&count=1", "Referer: $referer\r\n" . "Cookie: $search_acc_cookie\r\n");
 		$debug and print $log "status for getting $uri/render/?query=&start=0&count=1 is $status.\n";
 		my $cnt_of_this;
 		$status eq "ok" and $html = gunzip($html) and $html =~ /^{"success":true/ and $html =~ /"total_count":(\d+)/ and $cnt_of_this = $1 or redo;
@@ -194,7 +195,7 @@ sub proc_unusual_hat {
 		loop: while ($start < $cnt_of_this) {
 			my $count = 50;
 			$count = $cnt_of_this - $start if $cnt_of_this - $start < 50;
-			my ($status, $json) = http_get($socket_http_get, "$uri/render/?query=&start=$start&count=$count", "Referer: $referer\r\n" . "Cookie: $search_acc_cookie\r\n");
+			my ($status, $json) = http_get(\$socket_http_get, "$uri/render/?query=&start=$start&count=$count", "Referer: $referer\r\n" . "Cookie: $search_acc_cookie\r\n");
 			$debug and print $log "status for getting $uri/render/?query=&start=$start&count=$count is $status.\n";
 			$status eq "ok" and $json = gunzip($json) and $json =~ /^{"success":true/ and $json =~ /"results_html":"(.*?)[^\\]"/ and my @html = split /\\n/, $1 and (my $item_name) = ($json =~ /market_name":"(.*?)"/) or redo;
 			redo unless $name eq $item_name;
@@ -330,6 +331,7 @@ sub proc_unusual_courier {
 							print $log "color is $color\n" if ($debug > 1);
 						}
 					}
+					not defined $color and $color = "general";
 					print $log "this item is of name $name & effect $effect & color $color & price $total\n" if ($debug && $effect);
 					my $legacy = $color eq "legacy" && defined $iprice{legacy}{general};
 					my $specific_effect = defined $effect && defined $iprice{$effect}{general};
@@ -605,7 +607,7 @@ sub proc_tournament_item {
 				$player{$player_name} = $2;
 				$team_of_player{$player_name} = $1;
 				{
-					my ($status, $html) = http_get($socket_http_get, "$player_to_profile_uri{$player_name}", "Cookie: $search_acc_cookie\r\n");
+					my ($status, $html) = http_get(\$socket_http_get, "$player_to_profile_uri{$player_name}", "Cookie: $search_acc_cookie\r\n");
 					redo unless $status eq "ok";
 					$html = gunzip($html);
 					$html =~ m|<title>Steam Community :: (.*)</title>| and ($debug and print $log "player $player_name profile name setting to $1.\n"), $player_to_profile_name{$player_name} = $1 or redo;
@@ -625,7 +627,7 @@ sub proc_tournament_item {
 	@sorted_list = sort {$b <=> $a} values %quality;	$max_considered_price += defined $sorted_list[0] ? $sorted_list[0] : 0;
 	print $log "max_considered_price is $max_considered_price\n" if $debug;
 	{
-		my ($status, $html) = http_get($socket_http_get, "/market/search/render/?query=tournament&start=0&count=1", "Cookie: $search_acc_cookie\r\n" . "Referer: http://steamcommunity.com/market/search/render/?query=tournament\r\n");
+		my ($status, $html) = http_get(\$socket_http_get, "/market/search/render/?query=tournament&start=0&count=1", "Cookie: $search_acc_cookie\r\n" . "Referer: http://steamcommunity.com/market/search/render/?query=tournament\r\n");
 		print $log "status for getting /market/search/render/?query=tournament&start=0&count=1 is $status\n" if $debug;
 		redo unless $status eq "ok";
 		$html = gunzip($html);
@@ -639,7 +641,7 @@ sub proc_tournament_item {
 		while ($start < $cnt_unique_items) {
 			my $count = 50;
 			$count = $cnt_unique_items - $start if $cnt_unique_items - $start < 50;
-			my ($status, $html) = http_get($socket_http_get, "/market/search/render/?query=tournament&start=$start&count=$count", "Cookie: $search_acc_cookie\r\n" . "Referer: http://steamcommunity.com/market/search/render/?query=tournament\r\n");
+			my ($status, $html) = http_get(\$socket_http_get, "/market/search/render/?query=tournament&start=$start&count=$count", "Cookie: $search_acc_cookie\r\n" . "Referer: http://steamcommunity.com/market/search/render/?query=tournament\r\n");
 			print $log "status for getting /market/search/render/?query=tournament&start=$start&count=$count is $status\n" if $debug;
 			redo unless $status eq "ok";
 			$html = gunzip($html);
@@ -657,7 +659,7 @@ sub proc_tournament_item {
 				my $name = referer_to_name($url);
 				print $log "item name is $name\n" if $debug;
 				{
-					my ($status, $html) = http_get($socket_http_get, "$uri/render/?query=&start=0&count=1", "Referer: $url\r\n" . "Cookie: $search_acc_cookie\r\n");
+					my ($status, $html) = http_get(\$socket_http_get, "$uri/render/?query=&start=0&count=1", "Referer: $url\r\n" . "Cookie: $search_acc_cookie\r\n");
 					print $log "status for getting $uri/render/?query=&start=0&count=1 is $status\n" if $debug;
 					redo unless $status eq "ok";
 					$html = gunzip($html);
@@ -670,7 +672,7 @@ sub proc_tournament_item {
 					loop: while ($start < $cnt_specific_item) {
 						my $count = 50;
 						$count = $cnt_specific_item - $start if $cnt_specific_item - $start < 50;
-						my ($status, $json) = http_get($socket_http_get, "$uri/render/?query=&start=$start&count=$count", "Referer: $url\r\n" . "Cookie: $search_acc_cookie\r\n");
+						my ($status, $json) = http_get(\$socket_http_get, "$uri/render/?query=&start=$start&count=$count", "Referer: $url\r\n" . "Cookie: $search_acc_cookie\r\n");
 						print $log "status for getting $uri/render/?query=&start=$start&count=$count is $status\n" if $debug;
 						redo unless $status eq "ok";
 						$json = gunzip($json);
@@ -735,10 +737,14 @@ sub proc_tournament_item {
 								my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
 								my $post_result = qx(wget --no-check-certificate -U chrome --post-data="$post_data" --header="Cookie: $buying_acc_cookie" --header="Referer: $url" https://steamcommunity.com/market/buylisting/$listing_id -O - 2>/dev/null);
 								print "condition met, going to buy $url for total $total\n";
+								print "matched tournament $tournament_name\n" if defined $tournament_name;
 								print "matched team_a $team_a_name\n" if defined $team_a_name;
 								print "matched team_b $team_b_name\n" if defined $team_b_name;
 								print "event is $event_name\n";
 								print "matched player $_.\n" for (@matched_player);
+								open($fh, ">>", "tournament_json_dump") or die $!;
+								print $fh "$listing_id:\n$json\n";
+								close($fh);
 								unless ($?) {
 									($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
 									print "$post_result\nwallet_balance:$wallet_balance\n";

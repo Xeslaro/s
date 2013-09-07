@@ -43,6 +43,11 @@ while_opt: while ($i < @ARGV) {
 				}
 			}
 			last;
+		} elsif ($ans[$i] =~ /\s+<a href="(.*?)".*复制地址/) {
+			$cnt = 1;
+			qx(mplayer "$1" >&2) if $w;
+			qx|wget -U Xeslaro --no-dns-cache --connect-timeout=10 -t 0 -O 0.flv "$1"| unless $w;
+			last;
 		}
 		$i++;
 	}
