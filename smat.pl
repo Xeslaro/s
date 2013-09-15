@@ -10,6 +10,7 @@ my ($socket_http_get, $fork_process, $fh, $buying_acc_cookie, $search_acc_cookie
 my ($sell_mode, $sell_account, $profile_uri, $appid, $contextid, $sell_item_name, $sell_cnt, $sell_price);
 my @cookie_from_file;
 my %cnt_of_item;
+my @option_ignore_patterns = ("^func=", "^mode=", "^rest_time=", "^description_check_func=");
 $debug = 0, $fork_process = 1, $rest_time = 0;
 $i = 0;
 while ($i < @ARGV) {
@@ -63,7 +64,7 @@ sub do_sell {
 			{
 				qx(wget --no-check-certificate -U chrome --post-data="$post_data" --header="Cookie: $sell_account_cookie" --header="Referer: http://steamcommunity.com$profile_uri/inventory" https://steamcommunity.com/market/sellitem -O - 2>/dev/null);
 				print "post_data is $post_data, status is $?.\n";
-				redo unless $?;
+				redo if $?;
 			}
 			sleep 1;
 		}
@@ -103,11 +104,11 @@ my @child_pids;
 	open($fh, "<", "$iprice_file") or die $!;
 	my @iprice_content = <$fh>; close($fh) or die $!;
 	my $cnt_of_iitem = 0;
-	my $tournament_option;
+	my @stand_alone_items;
 	for (@iprice_content) {
 		chomp;
 		next if /^#/ or /^$/;
-		$tournament_option = $_, next if (/^func=proc_tournament_item/);
+		/(.*?)=(.*)/ and push(@stand_alone_items, [$1, $2]), next if (/mode=stand_alone/);
 		$cnt_of_iitem++;
 	}
 	print $log "cnt_of_iitem is $cnt_of_iitem.\n" if $debug;
@@ -115,20 +116,21 @@ my @child_pids;
 	my ($item_per_process, $remainder) = ($cnt_of_iitem / $fork_process, $cnt_of_iitem % $fork_process);
 	$item_per_process_outside = $item_per_process;
 	no integer;
-	if (defined $tournament_option) {
+	for (@stand_alone_items) {
 		my $pid = fork();
 		die $! unless defined $pid;
 		if ($pid) {
 			$group++, push(@child_pids, $pid);
 		} else {
-			$item_iprice{"tournament"} = $tournament_option;
+			$_->[1] =~ /rest_time=(\d+)/ and $rest_time = $1, ($debug and print $log "$_->[0] rest_time setting to $1.\n");
+			$item_iprice{$_->[0]} = $_->[1];
 			main_loop();
 		}
 	}
 	my $cnt_current_item = 0;
 	for (@iprice_content) {
 		chomp;
-		next if /^#/ or /^func=proc_tournament_item/ or /^$/;
+		next if /^#/ or /mode=stand_alone/ or /^$/;
 		/(.*?)=(.*)/;
 		$cnt_current_item++;
 		print $log "setting price for $1 to $2, cnt_current_item is $cnt_current_item\n" if $debug;
@@ -173,8 +175,10 @@ sub proc_unusual_hat {
 				"Smoking" => 1, "Purple Confetti" => 1, "Orbiting Fire" => 1, "Orbiting Planets" => 1, "Steaming" => 1,
 				"Bubbling" => 1, "Massed Files" => 1, "Nuts n' Bolts" => 1);
 	my $base_price;
-	for (split /,/, $option) {
-		next if /func=proc_unusual_hat/;
+	loop: for (split /,/, $option) {
+		for my $pattern (@option_ignore_patterns) {
+			/$pattern/ and next loop;
+		}
 		/^(\d+)$/ and $base_price = $1, next;
 		/(.*)=(.*)/ and ($debug and print $log "setting scaler of $1 to $2.\n"), $effect_to_scaler{$1} = $2, next;
 		print "invalid option $_.\n";
@@ -251,10 +255,11 @@ sub proc_unusual_courier {
 	my ($referer, $option, $name) = @_;
 	my %iprice;
 	my $max_price;
-	for (split /,/, $option) {
+	loop: for (split /,/, $option) {
+		for my $pattern (@option_ignore_patterns) {
+			/$pattern/ and next loop;
+		}
 		/(.*?)=(.*)/;
-		next if $1 eq "func";
-		$rest_time = $2, next if $1 eq "rest_time";
 		my $effect = $1;
 		$iprice{$effect} = {};
 		/(.*)=(.*)/ and $iprice{$effect}{$1} = $2 or $iprice{$effect}{general} = $_ for (split /:/, $2);
@@ -368,7 +373,10 @@ sub proc_usual_item {
 	my $price_bak = $iprice;
 	my $no_match = 0;
 	defined $cnt_of_item{$referer} and not $cnt_of_item{$referer} and return;
-	for (split /,/, $price_bak) {
+	loop: for (split /,/, $price_bak) {
+		for my $pattern (@option_ignore_patterns) {
+			/$pattern/ and next loop;
+		}
 		/^(\d+)$/ and $iprice = $1, next;
 		if (/^cnt=(\d+)$/) {
 			not defined $cnt_of_item{$referer} and $cnt_of_item{$referer} = $1, ($debug and print $log "setting cnt of $referer to $1.\n");
@@ -552,6 +560,8 @@ sub main_loop {
 					proc_unusual_courier($referer, $iprice, $name);
 				} elsif ($iprice =~ /func=proc_unusual_hat/) {
 					proc_unusual_hat($referer, $iprice, $name);
+				} elsif ($iprice =~ /func=proc_abstract_item/) {
+					proc_abstract_item($referer, $iprice);
 				} else {
 					proc_usual_item($referer, $iprice, $name);
 				}
@@ -592,8 +602,10 @@ sub proc_tournament_item {
 				  xboct => "/profiles/76561198049891200", zhou => "/profiles/76561198050403391", loda => "/profiles/76561198061761348",
 				  hao => "/profiles/76561198048774243", mushi => "/profiles/76561198050137285", bulldog => "/profiles/76561198036748162",
 				  akke => "/profiles/76561198001554683", mu => "/id/Piglara/", chuan => "/id/bestdotachuan", yyf => "/profiles/76561198050310737", 430 => "/profiles/76561198048850805");
-	for (split /,/, $price_conf) {
-		next if /func=proc_tournament_item/;
+	loop: for (split /,/, $price_conf) {
+		for my $pattern (@option_ignore_patterns) {
+			/$pattern/ and next loop;
+		}
 		/(.*?)=(.*)/;
 		my $hash_name = $1;
 		for (split /:/, $2) {
@@ -764,4 +776,111 @@ sub proc_tournament_item {
 			$start += $count; 
 		}
 	}
+}
+sub url_to_uri {
+	(my $url = shift) =~ m|http://.*?(/.*)| or die "invalid url.\n";
+	return $1;
+}
+sub get_total_count {
+	my $url = shift;
+	my $uri = url_to_uri($url);
+	{
+		my ($status, $json) = http_get(\$socket_http_get, "$uri/render/?query=&start=0&count=1", "Referer: $url\r\n" . "Cookie: $search_acc_cookie\r\n");
+		$status eq "ok" and $json = gunzip($json) and $json =~ /^{"success":true/ and $json =~ /"total_count":(\d+)/ and return $1 or redo;
+	}
+}
+sub get_listing_info {
+	my ($url, $start, $count, $ans) = @_;
+	my $uri = url_to_uri($url);
+	{
+		my ($status, $json) = http_get(\$socket_http_get, "$uri/render/?query=&start=$start&count=$count", "Referer: $url\r\n" . "Cookie: $search_acc_cookie\r\n");
+		$status eq "ok" and $json = gunzip($json) and $json =~ /^{"success":true/ and $json =~ /"results_html":"(.*?)[^\\]"/ and my @html = split /\\n/, $1;
+		my ($listing_id, $total, $subtotal, $fee);
+		my $i = 0;
+		while ($i < @html) {
+			$_ = $html[$i++];
+			/BuyMarketListing\('listing', '(.*?)'/ and $listing_id = $1, next;
+			/market_listing_price_with_fee/ and ($html[$i++] =~ /(\d+\.\d+)/ and $total = $1 * 100), next;
+			if (/market_listing_price_without_fee/) {
+				$html[$i++] =~ /(\d+\.\d+)/ and $subtotal = $1 * 100 or next;
+				$fee = $total - $subtotal;
+				$json =~ /"listingid":"$listing_id".*?"id":"(\d+)".*?"\1":.*?"id":"\1".*?"descriptions":\[(.*?)\]/ and my $description = $2 or next;
+				my $description_values_ref = [$description =~ /"value":"(.*?)"/g];
+				push @$ans, [$listing_id, $subtotal, $fee, $total, $description_values_ref];
+			}
+		}
+	}
+}
+sub proc_abstract_item {
+	my ($url, $option) = @_;
+	my $total_count = get_total_count($url);
+	print $log "total_count:$total_count.\n" if $debug;
+	my $start = 0;
+	loop: while ($start < $total_count) {
+		my $count = $total_count - $start < 50 ? $total_count - $start : 50;
+		my @ans;
+		get_listing_info($url, $start, $count, \@ans);
+		my $description_check_func;
+		/^description_check_func=(.*)$/ and $description_check_func = $1, last for (split /,/, $option);
+		for (@ans) {
+			my ($listing_id, $subtotal, $fee, $total, $description_values_ref) = @$_;
+			no strict "refs";
+			print $log "url:$url, listing_id:$listing_id, total:$total.\n" if $debug;
+			my $check_status = $description_check_func->($total, $option, $description_values_ref);
+			print $log "check_status:$check_status.\n" if $debug;
+			if ($check_status eq "buy_this") {
+				my $post_data = "sessionid=$sessionid&currency=1&subtotal=$subtotal&fee=$fee&total=$total";
+				my $post_result = qx(wget --no-check-certificate -U chrome --post-data="$post_data" --header="Cookie: $buying_acc_cookie" --header="Referer: $url" https://steamcommunity.com/market/buylisting/$listing_id -O - 2>/dev/null);
+				print "will buy $url for $total.\n";
+				unless ($?) {
+					($wallet_balance) = $post_result =~ /wallet_balance":(\d+)/;
+					print "$post_result\nwallet_balance:$wallet_balance\n";
+					open($fh, ">", "w") or die $!;
+					print $fh "$wallet_balance\n";
+					close($fh) or die $!;
+				} else {
+					print "failed.\n";
+				}
+			} elsif ($check_status eq "no_more") {
+				last loop
+			}
+		}
+		$start += $count;
+	}
+}
+sub greevil_checker {
+	my ($price, $option, $description_values_ref) = @_;
+	our %color_to_max_considered_price;
+	our ($greevil_checker_initialized, $greevil_max_considered_price);
+	my %effect_to_color = ("Quas Aura" => "blue", "Vas Aura" => "green", "Naked Aura" => "nake", "Flam Aura" => "orange",
+			       "Por Aura" => "purple", "Exort Aura" => "red", "Wex Aura" => "yellow", "Corp Aura" => "black",
+			       "Sanct Aura" => "white");
+	if (not defined $greevil_checker_initialized) {
+		loop: for (split /,/, $option) {
+			for my $pattern (@option_ignore_patterns) {
+				/$pattern/ and next loop;
+			}
+			/(.*?)=(.*)/ and $color_to_max_considered_price{$1} = $2 or die "unrecognized option format.\n";
+		}
+		$greevil_max_considered_price = 0;
+		$_ > $greevil_max_considered_price and $greevil_max_considered_price = $_ for (values %color_to_max_considered_price);
+		print $log "greevil_max_considered_price:$greevil_max_considered_price.\n" if $debug;
+		$greevil_checker_initialized = 1;
+	}
+	return "no_more" if $price > $greevil_max_considered_price;
+	my ($component, $armor);
+	$component = 0;
+	for (@$description_values_ref) {
+		/\+4 Physical Armor/ and $armor = 1, next;
+		(/Horns:/ or /Teeth:/ or /Tail:/ or /Hair:/ or /Nose:/ or /Ears:/ or /Wings:/ or /Eyes:/) and $component++, next;
+		if (/Effect: (.*)/) {
+			my $color;
+			print $log "component:$component, armor:", defined $armor ? "defined":"not_defined", ", effect:$1.\n" if $debug;
+			defined $effect_to_color{$1} and $color = $effect_to_color{$1} and defined $color_to_max_considered_price{$color} or next;
+			$color ne "black" and $component == 8 and $price < $color_to_max_considered_price{$color} and return "buy_this";
+			$color eq "black" and $price < $color_to_max_considered_price{$color} and return "buy_this";
+			$color eq "black" and defined $armor and defined $color_to_max_considered_price{black_with_armor} and $price < $color_to_max_considered_price{black_with_armor} and return "buy_this";
+		}
+	}
+	return "trivial";
 }
